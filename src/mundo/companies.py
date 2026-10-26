@@ -51,24 +51,32 @@ class Company:
     alive: bool = True
     founded_tick: int = 0
     _fac_n: int = 0
+    # Cache dos kinds de instalações (has()/chain_stage() são chamados
+    # milhares de vezes por corrida). Manter sincronizado via
+    # add_facility/_sync_kinds — nunca mutar facilities por fora sem
+    # ressincronizar (o motor faz isso na aquisição e no restore).
+    _kinds: set = field(default_factory=set, repr=False)
+
+    def _sync_kinds(self) -> None:
+        self._kinds = {f["kind"] for f in self.facilities.values()}
 
     def chain_stage(self) -> int:
         """Maior elo da cadeia que a empresa opera (0..5)."""
-        kinds = {f["kind"] for f in self.facilities.values()}
         for stage, kind in [(5, "assembly"), (4, "plant"), (3, "factory"),
                             (2, "refinery"), (1, "mine")]:
-            if kind in kinds:
+            if kind in self._kinds:
                 return stage
         return 0
 
     def has(self, kind: str) -> bool:
-        return any(f["kind"] == kind for f in self.facilities.values())
+        return kind in self._kinds
 
     def add_facility(self, kind: str, cell) -> dict:
         self._fac_n += 1
         fid = f"f{self.cid}-{self._fac_n}"
         fac = {"id": fid, "kind": kind, "cell": cell}
         self.facilities[fid] = fac
+        self._kinds.add(kind)
         return fac
 
 

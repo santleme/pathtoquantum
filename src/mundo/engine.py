@@ -19,6 +19,7 @@ from .tools_sim import (INSTA_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
 from .world import CITIES, DEPOSITS, Deposit
 
 START_YEAR = 2027
+_COMMODITIES_SORTED = sorted(chain.COMMODITIES)
 
 
 class Policy:
@@ -107,13 +108,14 @@ class HeuristicPolicy(Policy):
         self.use_tools(engine, comp)
 
     def pick_deposit(self, engine, comp: Company) -> Deposit | None:
-        hq = next(ct for ct in CITIES if ct.name == comp.hq_city)
+        hq = engine._city_by_name[comp.hq_city]
+        mined = {f.get("deposit") for f in comp.facilities.values()}
         best, best_score = None, -1.0
         for d in engine.deposits:
             owner = engine.claimed_by.get(d.cell)
             if owner is not None and owner != comp.cid:
                 continue
-            if any(f.get("deposit") == d.name for f in comp.facilities.values()):
+            if d.name in mined:
                 continue
             dist = abs(d.lat - hq.lat) + abs(d.lon - hq.lon)
             score = chain.BASE_PRICES[d.resource] / (1.0 + dist / 25.0)
@@ -128,7 +130,7 @@ class HeuristicPolicy(Policy):
 
     def build_downstream(self, engine, comp: Company, spendable: float) -> bool:
         t = comp.traits
-        hq_cell = next(ct for ct in CITIES if ct.name == comp.hq_city).cell
+        hq_cell = engine._city_by_name[comp.hq_city].cell
 
         def affordable(kind):
             return spendable > chain.FACILITIES[kind]["cost"]
@@ -280,6 +282,7 @@ def _company_from_state(cs: dict) -> Company:
     comp.alive = cs["alive"]
     comp.founded_tick = cs["founded_tick"]
     comp._fac_n = cs["fac_n"]
+    comp._sync_kinds()
     return comp
 
 
@@ -293,6 +296,7 @@ class Engine:
         self.tick = 0
         self.chronicle = Chronicle(START_YEAR)
         self.deposits: list[Deposit] = copy.deepcopy(DEPOSITS)
+        self._rebuild_caches()
         self.remaining = {d.name: d.size_t for d in self.deposits}
         self.claimed_by: dict[tuple, int] = {}       # cell -> cid dono
         self.companies: list[Company] = make_companies(n_companies, self.rng)
@@ -314,13 +318,21 @@ class Engine:
         # mercado registram aqui; step() consolida num evento "flows".
         self._flows: dict[int, dict[str, float]] = {}
         for c in self.companies:
-            city = next(ct for ct in CITIES if ct.name == c.hq_city)
+            _hq = self._city_by_name[c.hq_city]  # valida a sede no mapa
             self.chronicle.add(0, "founding",
                                f"{c.name} ({c.archetype}) é fundada em {c.hq_city} "
                                f"com US$ {c.cash/1e6:.0f}M em caixa.", c.name,
                                cid=c.cid, cash=c.cash, archetype=c.archetype,
                                hq=c.hq_city)
         self._snapshot()
+
+    # -- caches de consulta (performance) ---------------------------------
+    def _rebuild_caches(self) -> None:
+        """Índices nome->objeto: eliminam varreduras lineares por tick
+        em _produce/_pick_deposit/_build_downstream. Depósitos novos
+        (evento de Deus) entram no índice em _apply_god_events."""
+        self._deposit_by_name = {d.name: d for d in self.deposits}
+        self._city_by_name = {c.name: c for c in CITIES}
 
     # -- utilidades de ledger -------------------------------------------
     def _flow(self, cid: int, key: str, amount: float) -> None:
@@ -372,6 +384,7 @@ class Engine:
                 d = Deposit(ev["name"], ev["resource"], ev["lat"], ev["lon"],
                             ev["size_t"], ev["grade"])
                 self.deposits.append(d)
+                self._deposit_by_name[d.name] = d
                 self.remaining[d.name] = d.size_t
                 self.chronicle.add(self.tick, "god",
                                    f"DESCOBERTA: novo depósito de {d.resource} "
@@ -442,7 +455,7 @@ class Engine:
             cap = chain.FACILITIES[kind]["capacity"]
             cost = chain.OPERATING_COST[kind]
             if kind == "mine":
-                dep = next(d for d in self.deposits if d.name == fac["deposit"])
+                dep = self._deposit_by_name[fac["deposit"]]
                 crude = min(cap, self.remaining[dep.name])
                 if crude <= 0:
                     continue
@@ -490,17 +503,22 @@ class Engine:
 
     # -- mercado --------------------------------------------------------------
     def _market(self) -> None:
-        for commodity in sorted(chain.COMMODITIES):
+        for commodity in _COMMODITIES_SORTED:
             price = self.prices[commodity]
-            offers = [(c, c._offers.get(commodity, 0.0))
-                      for c in self.companies if c.alive]
-            offers = [(c, q) for c, q in offers if q > 0.001]
+            # coleta única: ofertas e compras na ordem das empresas vivas
+            # (listas e somas idênticas às da versão em duas passagens)
+            offers, buys = [], []
+            for c in self.companies:
+                if not c.alive:
+                    continue
+                q = c._offers.get(commodity, 0.0)
+                if q > 0.001:
+                    offers.append((c, q))
+                buys.append((c, c._buys.get(commodity, 0.0)))
             total_supply = sum(q for _, q in offers)
             if total_supply <= 0:
                 continue
             # 1) comércio entre empresas (dinheiro interno: soma zero)
-            buys = [(c, c._buys.get(commodity, 0.0))
-                    for c in self.companies if c.alive]
             internal_demand = sum(q for _, q in buys)
             sold_internal = 0.0
             offered_left = {c.cid: q for c, q in offers}
@@ -590,6 +608,8 @@ class Engine:
                     buyer.stocks[c_name] += comp.stocks[c_name]
                     comp.stocks[c_name] = 0.0
                 comp.facilities = {}
+                buyer._sync_kinds()
+                comp._sync_kinds()
                 self.chronicle.add(self.tick, "acquisition",
                                    f"AQUISIÇÃO: {buyer.name} compra os ativos "
                                    f"da falida {comp.name} por "
@@ -722,6 +742,7 @@ class Engine:
         eng.deposits = [Deposit(d["name"], d["resource"], d["lat"], d["lon"],
                                 d["size_t"], d["grade"])
                         for d in state["deposits"]]
+        eng._rebuild_caches()
         eng.remaining = dict(state["remaining"])
         eng.claimed_by = {tuple(cell): cid
                           for cell, cid in state["claimed_by"]}
