@@ -9,10 +9,12 @@ import copy
 import json
 import random
 
+from dataclasses import asdict
+
 from . import chain
-from .chronicle import Chronicle, sim_date
+from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, make_companies
-from .tools_sim import (INSTA_DURATION_TICKS, ZAP_DURATION_TICKS,
+from .tools_sim import (INSTA_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
                         insta_campaign_cost, zap_campaign_cost)
 from .world import CITIES, DEPOSITS, Deposit
 
@@ -231,6 +233,54 @@ class HeuristicPolicy(Policy):
                                f"{comp.name} abre canal de vendas no ZapSim "
                                f"(US$ {zap_campaign_cost():,.0f}).", comp.name)
 
+
+
+def _rng_to_json(state) -> list:
+    version, internal, gauss = state
+    return [version, list(internal), gauss]
+
+
+def _rng_from_json(data: list):
+    version, internal, gauss = data
+    return (version, tuple(internal), gauss)
+
+
+def _company_state(c: Company) -> dict:
+    return {
+        "cid": c.cid, "name": c.name, "archetype": c.archetype,
+        "traits": dict(c.traits), "hq_city": c.hq_city, "color": c.color,
+        "cash": c.cash, "stocks": dict(c.stocks),
+        "facilities": {fid: {"id": f["id"], "kind": f["kind"],
+                             "cell": list(f["cell"]),
+                             **({"deposit": f["deposit"]}
+                                if "deposit" in f else {})}
+                       for fid, f in c.facilities.items()},
+        "claimed": sorted([list(cell) for cell in c.claimed]),
+        "knowledge": {k: [g, s] for k, (g, s) in c.knowledge.items()},
+        "tools": {"insta_until": c.tools.insta_until,
+                  "insta_strength": c.tools.insta_strength,
+                  "zap_until": c.tools.zap_until},
+        "alive": c.alive, "founded_tick": c.founded_tick, "fac_n": c._fac_n,
+    }
+
+
+def _company_from_state(cs: dict) -> Company:
+    comp = Company(cid=cs["cid"], name=cs["name"],
+                   archetype=cs["archetype"], traits=dict(cs["traits"]),
+                   hq_city=cs["hq_city"], color=cs["color"], cash=cs["cash"])
+    comp.stocks = dict(cs["stocks"])
+    comp.facilities = {fid: {"id": f["id"], "kind": f["kind"],
+                             "cell": tuple(f["cell"]),
+                             **({"deposit": f["deposit"]}
+                                if "deposit" in f else {})}
+                       for fid, f in cs["facilities"].items()}
+    comp.claimed = {tuple(cell) for cell in cs["claimed"]}
+    comp.knowledge = {k: (v[0], v[1]) for k, v in cs["knowledge"].items()}
+    comp.tools = ToolEffects(**cs["tools"])
+    comp.alive = cs["alive"]
+    comp.founded_tick = cs["founded_tick"]
+    comp._fac_n = cs["fac_n"]
+    return comp
 
 
 class Engine:
@@ -557,7 +607,7 @@ class Engine:
                 "id": c.cid, "name": c.name, "archetype": c.archetype,
                 "color": c.color, "hq": c.hq_city, "alive": c.alive,
                 "cash": round(c.cash, 2), "stage": c.chain_stage(),
-                "territory": sorted(list(c.claimed)),
+                "territory": sorted([list(cell) for cell in c.claimed]),
                 "facilities": [{"kind": f["kind"], "cell": list(f["cell"]),
                                 "deposit": f.get("deposit")}
                                for f in c.facilities.values()],
@@ -620,6 +670,77 @@ class Engine:
                 "facilities": len(c.facilities),
             } for c in sorted(self.companies, key=lambda x: -x.cash)],
         }
+
+    # -- snapshot / restore -------------------------------------------------
+    def state_dict(self) -> dict:
+        """Estado completo do mundo, serializável em JSON puro.
+
+        Inclui o estado interno do RNG: restaurar e continuar produz
+        resultado idêntico ao da corrida contínua (provado em teste).
+        """
+        return {
+            "version": 1,
+            "seed": self.seed,
+            "tick": self.tick,
+            "rng_state": _rng_to_json(self.rng.getstate()),
+            "deposits": [{"name": d.name, "resource": d.resource,
+                          "lat": d.lat, "lon": d.lon, "size_t": d.size_t,
+                          "grade": d.grade} for d in self.deposits],
+            "remaining": dict(self.remaining),
+            "claimed_by": [[list(cell), cid]
+                           for cell, cid in sorted(self.claimed_by.items())],
+            "companies": [_company_state(c) for c in self.companies],
+            "prices": dict(self.prices),
+            "demand_factors": {k: [f, until]
+                               for k, (f, until) in self.demand_factors.items()},
+            "god_events": copy.deepcopy(self.god_events),
+            "first_link": {str(k): v for k, v in self.first_link.items()},
+            "frames": copy.deepcopy(self.frames),
+            "chronicle": {"start_year": self.chronicle.start_year,
+                          "events": [asdict(e) for e in self.chronicle.events]},
+            "ledger_mass": copy.deepcopy(self.ledger_mass),
+            "initial_cash": self.initial_cash,
+            "money_in": self.money_in,
+            "money_out": self.money_out,
+            "total_supercomputers": self.total_supercomputers,
+        }
+
+    @classmethod
+    def from_state(cls, state: dict,
+                   policy: Policy | None = None) -> "Engine":
+        """Reconstrói um Engine de um state_dict (sem re-fundar o mundo:
+        nenhum RNG é consumido e nenhum evento é reemitido)."""
+        eng = cls.__new__(cls)
+        eng.policy = policy if policy is not None else HeuristicPolicy()
+        eng.seed = state["seed"]
+        eng.tick = state["tick"]
+        eng.rng = random.Random()
+        eng.rng.setstate(_rng_from_json(state["rng_state"]))
+        eng.chronicle = Chronicle(state["chronicle"]["start_year"])
+        eng.chronicle.events = [Event(**e)
+                                for e in state["chronicle"]["events"]]
+        eng.deposits = [Deposit(d["name"], d["resource"], d["lat"], d["lon"],
+                                d["size_t"], d["grade"])
+                        for d in state["deposits"]]
+        eng.remaining = dict(state["remaining"])
+        eng.claimed_by = {tuple(cell): cid
+                          for cell, cid in state["claimed_by"]}
+        eng.companies = [_company_from_state(cs)
+                         for cs in state["companies"]]
+        eng.prices = dict(state["prices"])
+        eng.demand_factors = {k: (f, until) for k, (f, until)
+                              in state["demand_factors"].items()}
+        eng.god_events = sorted(copy.deepcopy(state["god_events"]),
+                                key=lambda e: e["tick"])
+        eng.first_link = {int(k): v for k, v in state["first_link"].items()}
+        eng.frames = copy.deepcopy(state["frames"])
+        eng.ledger_mass = copy.deepcopy(state["ledger_mass"])
+        eng.initial_cash = state["initial_cash"]
+        eng.money_in = state["money_in"]
+        eng.money_out = state["money_out"]
+        eng.total_supercomputers = state["total_supercomputers"]
+        eng._flows = {}
+        return eng
 
     def save_outputs(self, outdir: str) -> None:
         import os

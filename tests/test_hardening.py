@@ -7,6 +7,8 @@
 Fixtures minúsculas, como no restante da suíte — a corrida de verdade
 roda no Kaggle.
 """
+import json
+
 import pytest
 
 from mundo.chronicle import replay
@@ -114,3 +116,33 @@ def test_replay_after_bankruptcy_and_acquisition():
     assert "bankruptcy" in kinds
     assert "acquisition" in kinds
     assert_replay_matches(eng, res)
+
+
+def test_snapshot_restore_mid_run_identical():
+    eng = Engine(seed=7, n_companies=8)
+    for _ in range(12):
+        eng.step()
+    # round-trip por JSON puro: prova que o estado é serializável de verdade
+    state = json.loads(json.dumps(eng.state_dict()))
+    resumed = Engine.from_state(state).run(12)
+    ref = Engine(seed=7, n_companies=8).run(24)
+    assert resumed["scoreboard"] == ref["scoreboard"]
+    assert resumed["frames"] == ref["frames"]
+    assert resumed["chronicle"] == ref["chronicle"]
+
+
+def test_snapshot_restore_with_god_events():
+    ev = [{"tick": 15, "type": "price_shock", "commodity": "copper",
+           "factor": 0.6, "duration": 5},
+          {"tick": 20, "type": "discovery", "name": "Sal Tardio",
+           "resource": "lithium_ore", "lat": -26.0, "lon": -68.0,
+           "size_t": 600000, "grade": 0.66}]
+    eng = Engine(seed=11, n_companies=8, god_events=ev)
+    for _ in range(18):
+        eng.step()
+    state = json.loads(json.dumps(eng.state_dict()))
+    resumed = Engine.from_state(state).run(18)
+    ref = Engine(seed=11, n_companies=8, god_events=ev).run(36)
+    assert resumed["scoreboard"] == ref["scoreboard"]
+    assert resumed["frames"] == ref["frames"]
+    assert resumed["chronicle"] == ref["chronicle"]
