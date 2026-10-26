@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Mundo Autônomo — o nascimento do mundo</title>
+<style>
+  :root { --bg:#0b1020; --panel:#131a2e; --ink:#e8ecf6; --dim:#8b96b8; --line:#26304d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family: ui-monospace, Menlo, Consolas, monospace; }
+  header { display:flex; gap:14px; align-items:center; padding:10px 16px;
+           border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; letter-spacing:.04em; }
+  header .date { color:#ffd166; font-size:15px; }
+  button, select, input[type=file] { background:#1c2742; color:var(--ink);
+    border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; }
+  input[type=range] { flex:1; accent-color:#ffd166; }
+  main { display:grid; grid-template-columns: 1fr 380px; gap:0; height: calc(100vh - 53px); }
+  #mapwrap { position:relative; padding:10px; }
+  canvas { width:100%; height:100%; background:#0a1428; border:1px solid var(--line);
+           border-radius:8px; }
+  aside { border-left:1px solid var(--line); display:flex; flex-direction:column;
+          background:var(--panel); min-height:0; }
+  aside h2 { font-size:12px; text-transform:uppercase; letter-spacing:.12em;
+             color:var(--dim); margin:12px 12px 6px; }
+  #board { padding:0 12px; }
+  .row { display:grid; grid-template-columns: 12px 1fr auto; gap:8px; align-items:center;
+         padding:5px 0; border-bottom:1px dashed #22304f; font-size:12.5px; }
+  .dot { width:10px; height:10px; border-radius:50%; }
+  .row .cash { color:#9ae6b4; }
+  .row.dead { opacity:.45; text-decoration: line-through; }
+  .stage { color:var(--dim); font-size:11px; }
+  #feed { flex:1; overflow-y:auto; padding:0 12px 12px; font-size:12.5px; line-height:1.45; }
+  #feed .ev { padding:5px 0; border-bottom:1px solid #1b2540; }
+  #feed .ev b { color:#ffd166; font-weight:600; }
+  .legend { font-size:11px; color:var(--dim); padding:6px 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌎 MUNDO AUTÔNOMO</h1>
+  <span class="date" id="date">—</span>
+  <button id="play">⏸ pausar</button>
+  <label>velocidade
+    <select id="speed"><option value="1400">lenta</option>
+      <option value="700" selected>normal</option><option value="250">rápida</option>
+      <option value="60">deus apressado</option></select></label>
+  <input type="range" id="scrub" min="0" max="0" value="0">
+  <label>frames.json <input type="file" id="file" accept=".json"></label>
+</header>
+<main>
+  <div id="mapwrap"><canvas id="map"></canvas></div>
+  <aside>
+    <h2>Placar das empresas</h2>
+    <div id="board"></div>
+    <h2>Crônica do mundo</h2>
+    <div id="feed"></div>
+  </aside>
+</main>
+<div class="legend">◆ depósito (letra = recurso: L lítio, C cobre, F ferro, P petróleo) · ● cidade-mercado · célula colorida = território/instalação da empresa</div>
+<script>
+let DATA = null, idx = 0, timer = null;
+const $ = id => document.getElementById(id);
+const RES = { lithium_ore:'L', copper_ore:'C', iron_ore:'F', oil:'P' };
+const STAGE = ['—','extração','refino','componentes','dispositivos','SUPERCOMPUTADOR'];
+
+function load(data) {
+  DATA = data; idx = 0;
+  $('scrub').max = data.frames.length - 1; $('scrub').value = 0;
+  render(); play();
+}
+function frame() { return DATA.frames[idx]; }
+
+function render() {
+  if (!DATA) return;
+  const f = frame();
+  $('date').textContent = f.date + '  ·  tick ' + f.tick;
+  $('scrub').value = idx;
+  drawMap(f); drawBoard(f); drawFeed(f);
+}
+
+function drawMap(f) {
+  const cv = $('map'), ctx = cv.getContext('2d');
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W) { cv.width = W; cv.height = H; }
+  ctx.clearRect(0, 0, W, H);
+  // grade lat/lon: lat -56..14, lon -82..-32 (célula 2.5°)
+  const X = lon => (lon + 82) / 50 * W, Y = lat => (14 - lat) / 70 * H;
+  ctx.strokeStyle = '#16223c';
+  for (let lon = -80; lon <= -32; lon += 10) { ctx.beginPath(); ctx.moveTo(X(lon), 0); ctx.lineTo(X(lon), H); ctx.stroke(); }
+  for (let lat = -50; lat <= 10; lat += 10) { ctx.beginPath(); ctx.moveTo(0, Y(lat)); ctx.lineTo(W, Y(lat)); ctx.stroke(); }
+  const cellW = 2.5 / 50 * W, cellH = 2.5 / 70 * H;
+  const cellXY = cell => [X(-82 + cell[1] * 2.5), Y(14 - cell[0] * 2.5) - cellH];
+  // territórios e instalações
+  for (const c of f.companies) {
+    ctx.fillStyle = c.color + '55';
+    for (const cell of c.territory) { const [x, y] = cellXY(cell); ctx.fillRect(x, y, cellW, cellH); }
+    for (const fac of c.facilities) {
+      const [x, y] = cellXY(fac.cell);
+      ctx.fillStyle = c.color; ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2);
+      ctx.fillStyle = '#0b1020'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
+      ctx.fillText({mine:'⛏', refinery:'♨', factory:'🏭', plant:'📱', assembly:'🖥'}[fac.kind] || '?',
+                   x + cellW / 2, y + cellH / 2 + 3);
+    }
+  }
+  // depósitos
+  for (const d of f.deposits) {
+    const x = X(d.lon), y = Y(d.lat);
+    ctx.fillStyle = '#ffd166'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('◆', x, y + 4);
+    ctx.fillStyle = '#0b1020'; ctx.font = 'bold 8px monospace';
+    ctx.fillText(RES[d.resource] || '?', x, y + 3);
+    ctx.fillStyle = '#8b96b8'; ctx.font = '9px monospace';
+    ctx.fillText(Math.round(d.remaining_frac * 100) + '%', x, y + 15);
+  }
+  // cidades
+  const CITIES = [['São Paulo',-23.5,-46.6],['Rio',-22.9,-43.2],['Buenos Aires',-34.6,-58.4],
+                  ['Santiago',-33.4,-70.7],['Lima',-12,-77],['Bogotá',4.7,-74.1],
+                  ['Belo Horizonte',-19.9,-43.9],['Porto Alegre',-30,-51.2]];
+  ctx.textAlign = 'left';
+  for (const [n, la, lo] of CITIES) {
+    ctx.fillStyle = '#e8ecf6'; ctx.font = '10px monospace';
+    ctx.fillText('● ' + n, X(lo) + 3, Y(la) + 3);
+  }
+}
+
+function drawBoard(f) {
+  const rows = [...f.companies].sort((a, b) => b.cash - a.cash).map(c =>
+    `<div class="row ${c.alive ? '' : 'dead'}"><span class="dot" style="background:${c.color}"></span>
+     <span>${c.name}<br><span class="stage">${c.archetype} · elo: ${STAGE[c.stage]}</span></span>
+     <span class="cash">US$ ${(c.cash / 1e6).toFixed(1)}M</span></div>`).join('');
+  $('board').innerHTML = rows;
+}
+
+function drawFeed(f) {
+  const evs = DATA.chronicle.filter(e => e.tick <= f.tick);
+  $('feed').innerHTML = evs.slice(-90).reverse().map(e =>
+    `<div class="ev"><b>${e.date}</b> — ${e.text}</div>`).join('');
+}
+
+function play() {
+  clearInterval(timer);
+  timer = setInterval(() => {
+    if (idx < DATA.frames.length - 1) { idx++; render(); }
+    else { clearInterval(timer); $('play').textContent = '▶ recomeçar'; }
+  }, +$('speed').value);
+  $('play').textContent = '⏸ pausar';
+}
+$('play').onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; $('play').textContent = '▶ tocar'; }
+  else if (idx >= DATA.frames.length - 1) { idx = 0; render(); play(); }
+  else play();
+};
+$('speed').onchange = () => { if (timer) play(); };
+$('scrub').oninput = e => { idx = +e.target.value; render(); };
+$('file').onchange = e => {
+  const r = new FileReader();
+  r.onload = () => load(JSON.parse(r.result));
+  r.readAsText(e.target.files[0]);
+};
+fetch('frames.json').then(r => r.json()).then(load)
+  .catch(() => { $('feed').innerHTML = '<div class="ev">Não achei frames.json ao lado — use o seletor de arquivo acima (gere com: python -m mundo.cli --out viewer).</div>'; });
+</script>
+</body>
+</html>
