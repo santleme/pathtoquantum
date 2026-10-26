@@ -130,7 +130,7 @@ def main(argv: list[str]) -> int:
         helper = "/home/hatch/workspace/custom-connectors/custom.kaggle/bin/kaggle_api.py"
         print(f"criando dataset do fonte a partir de {bundle} ...")
         r = subprocess.run([sys.executable, helper, "create-dataset",
-                            str(bundle), "Mundo Autonomo Src"],
+                            str(bundle), "--title", "Mundo Autonomo Src"],
                            capture_output=True, text=True, timeout=300)
         print(r.stdout[-600:] or r.stderr[-600:])
         if r.returncode != 0:
