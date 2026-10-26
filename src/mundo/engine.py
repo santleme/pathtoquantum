@@ -59,7 +59,7 @@ class HeuristicPolicy(Policy):
                 known = comp.knowledge.get(target.name)
                 if known is None:
                     if spendable > chain.PROBE_COST:
-                        engine._spend(comp, chain.PROBE_COST)
+                        engine._spend(comp, chain.PROBE_COST, reason="probe")
                         comp.knowledge[target.name] = (target.grade, target.size_t)
                         if target.grade >= 0.78:
                             engine.chronicle.add(engine.tick, "probe",
@@ -75,15 +75,19 @@ class HeuristicPolicy(Policy):
                     cost = chain.CLAIM_COST + chain.FACILITIES["mine"]["cost"]
                     if grade >= threshold and spendable > cost:
                         if target.cell not in comp.claimed:
-                            engine._spend(comp, chain.CLAIM_COST)
+                            engine._spend(comp, chain.CLAIM_COST, reason="claim")
                             comp.claimed.add(target.cell)
                             engine.claimed_by[target.cell] = comp.cid
-                        engine._spend(comp, chain.FACILITIES["mine"]["cost"])
+                        engine._spend(comp, chain.FACILITIES["mine"]["cost"],
+                                      reason="build")
                         fac = comp.add_facility("mine", target.cell)
                         fac["deposit"] = target.name
                         engine.chronicle.add(engine.tick, "mine",
                                            f"{comp.name} abre sua mina em "
-                                           f"{target.name}.", comp.name)
+                                           f"{target.name}.", comp.name,
+                                           cid=comp.cid, fid=fac["id"],
+                                           facility_kind="mine", cell=list(target.cell),
+                                           deposit=target.name)
                         engine._note_link(comp, 1)
                         capex_done = True
 
@@ -128,9 +132,11 @@ class HeuristicPolicy(Policy):
             return spendable > chain.FACILITIES[kind]["cost"]
 
         def build(kind, text):
-            engine._spend(comp, chain.FACILITIES[kind]["cost"])
-            comp.add_facility(kind, hq_cell)
-            engine.chronicle.add(engine.tick, "facility", text, comp.name)
+            engine._spend(comp, chain.FACILITIES[kind]["cost"], reason="build")
+            fac = comp.add_facility(kind, hq_cell)
+            engine.chronicle.add(engine.tick, "facility", text, comp.name,
+                                 cid=comp.cid, fid=fac["id"], facility_kind=kind,
+                                 cell=list(hq_cell))
             engine._note_link(comp, comp.chain_stage())
             return True
 
@@ -209,7 +215,7 @@ class HeuristicPolicy(Policy):
         if not tools.insta_active(engine.tick) \
                 and engine.rng.random() < t["marketing"] * 0.45 \
                 and comp.cash - self.reserve(comp) > insta_campaign_cost():
-            engine._spend(comp, insta_campaign_cost())
+            engine._spend(comp, insta_campaign_cost(), reason="tools")
             tools.insta_until = engine.tick + INSTA_DURATION_TICKS
             tools.insta_strength = 1.0
             engine.chronicle.add(engine.tick, "tool",
@@ -219,7 +225,7 @@ class HeuristicPolicy(Policy):
         if not tools.zap_active(engine.tick) and comp.stocks["device"] > 20 \
                 and engine.rng.random() < t["marketing"] * 0.35 \
                 and comp.cash - self.reserve(comp) > zap_campaign_cost():
-            engine._spend(comp, zap_campaign_cost())
+            engine._spend(comp, zap_campaign_cost(), reason="tools")
             tools.zap_until = engine.tick + ZAP_DURATION_TICKS
             engine.chronicle.add(engine.tick, "tool",
                                f"{comp.name} abre canal de vendas no ZapSim "
@@ -254,17 +260,43 @@ class Engine:
         self.money_in = 0.0     # vendas às cidades
         self.money_out = 0.0    # construção, sondagem, operação, ferramentas
         self.total_supercomputers = 0.0
+        # Fluxos de caixa do tick corrente (event-sourcing): _spend e o
+        # mercado registram aqui; step() consolida num evento "flows".
+        self._flows: dict[int, dict[str, float]] = {}
         for c in self.companies:
             city = next(ct for ct in CITIES if ct.name == c.hq_city)
             self.chronicle.add(0, "founding",
                                f"{c.name} ({c.archetype}) é fundada em {c.hq_city} "
-                               f"com US$ {c.cash/1e6:.0f}M em caixa.", c.name)
+                               f"com US$ {c.cash/1e6:.0f}M em caixa.", c.name,
+                               cid=c.cid, cash=c.cash, archetype=c.archetype,
+                               hq=c.hq_city)
         self._snapshot()
 
     # -- utilidades de ledger -------------------------------------------
-    def _spend(self, comp: Company, amount: float) -> None:
+    def _flow(self, cid: int, key: str, amount: float) -> None:
+        flows = self._flows.setdefault(cid, {})
+        flows[key] = flows.get(key, 0.0) + amount
+
+    def _spend(self, comp: Company, amount: float,
+               reason: str = "spend") -> None:
         comp.cash -= amount
         self.money_out += amount
+        self._flow(comp.cid, f"spend_{reason}", -amount)
+
+    def _emit_flows(self, cash_start: dict[int, float]) -> None:
+        """Fecha o tick no log: um evento "flows" com o delta de caixa de
+        cada empresa e o detalhamento por motivo (spend_*, trade_*, ...).
+        É o que torna a crônica suficiente para o replay (event-sourcing).
+        """
+        companies = {}
+        for c in self.companies:
+            breakdown = {k: v for k, v in self._flows.get(c.cid, {}).items()
+                         if v != 0.0}
+            companies[str(c.cid)] = {
+                "delta": c.cash - cash_start[c.cid], "cash": c.cash,
+                "flows": breakdown}
+        self._flows = {}
+        self.chronicle.add(self.tick, "flows", "", None, companies=companies)
 
     def _convert(self, comp: Company, src: str, qty_in: float,
                  dst: str, qty_out: float) -> None:
@@ -370,7 +402,7 @@ class Engine:
                 comp.stocks[dep.resource] += payable
                 self.ledger_mass[dep.resource]["extracted"] += payable
                 self.ledger_mass[dep.resource]["wasted"] += waste
-                self._spend(comp, crude * cost)
+                self._spend(comp, crude * cost, reason="ops")
             elif kind == "refinery":
                 budget = cap
                 for raw, refined in chain.RAW_TO_REFINED.items():
@@ -382,7 +414,7 @@ class Engine:
                     budget -= qty
                     self._convert(comp, raw, qty, refined,
                                   qty * chain.REFINE_YIELD)
-                    self._spend(comp, qty * cost)
+                    self._spend(comp, qty * cost, reason="ops")
             elif kind in ("factory", "plant", "assembly"):
                 product = {"factory": "component", "plant": "device",
                            "assembly": "supercomputer"}[kind]
@@ -399,7 +431,7 @@ class Engine:
                     self.ledger_mass[inp]["consumed"] += qty
                 comp.stocks[product] += units * recipe["out"]
                 self.ledger_mass[product]["produced"] += units * recipe["out"]
-                self._spend(comp, units * cost)
+                self._spend(comp, units * cost, reason="ops")
                 if product == "supercomputer":
                     self.total_supercomputers += units
                     self.chronicle.add(self.tick, "record",
@@ -441,6 +473,8 @@ class Engine:
                     buyer.stocks[commodity] += share
                     seller.cash += share * price
                     buyer.cash -= share * price
+                    self._flow(seller.cid, "trade_in", share * price)
+                    self._flow(buyer.cid, "trade_out", -share * price)
                     offered_left[seller.cid] -= share
                     sold_internal += share
             # 2) demanda das cidades sobre o que restou
@@ -467,6 +501,7 @@ class Engine:
                         continue
                     seller.stocks[commodity] -= qty
                     seller.cash += qty * price
+                    self._flow(seller.cid, "city_sales", qty * price)
                     self.money_in += qty * price
                     self.ledger_mass[commodity]["sold_external"] += qty
                     offered_left[seller.cid] -= qty
@@ -485,7 +520,8 @@ class Engine:
         comp.alive = False
         self.chronicle.add(self.tick, "bankruptcy",
                            f"FALÊNCIA: {comp.name} quebra com "
-                           f"US$ {comp.cash/1e6:.1f}M de rombo.", comp.name)
+                           f"US$ {comp.cash/1e6:.1f}M de rombo.", comp.name,
+                           cid=comp.cid)
         buyers = [c for c in self.companies
                   if c.alive and c.cash > 12_000_000]
         if buyers and comp.facilities:
@@ -493,7 +529,8 @@ class Engine:
             price = sum(chain.FACILITIES[f["kind"]]["cost"]
                         for f in comp.facilities.values()) * 0.15
             if buyer.cash > price:
-                self._spend(buyer, price)   # vai a credores: sink externo
+                facility_ids = sorted(comp.facilities)
+                self._spend(buyer, price, reason="acquisition")
                 for fac in comp.facilities.values():
                     buyer.facilities[fac["id"]] = fac
                 for cell in comp.claimed:
@@ -506,7 +543,9 @@ class Engine:
                 self.chronicle.add(self.tick, "acquisition",
                                    f"AQUISIÇÃO: {buyer.name} compra os ativos "
                                    f"da falida {comp.name} por "
-                                   f"US$ {price/1e6:.1f}M.", buyer.name)
+                                   f"US$ {price/1e6:.1f}M.", buyer.name,
+                                   buyer_cid=buyer.cid, from_cid=comp.cid,
+                                   facility_ids=facility_ids, price=price)
 
     # -- frames ------------------------------------------------------------------
     def _snapshot(self) -> None:
@@ -538,6 +577,8 @@ class Engine:
         """Um tick mensal completo: Deus, falências/decisões, produção,
         mercado. Extraído de run() para permitir snapshot/restore e
         drivers externos (treino RL) sem mudar a ordem das operações."""
+        cash_start = {c.cid: c.cash for c in self.companies}
+        self._flows = {}
         self._apply_god_events()
         for comp in self.companies:
             self._check_bankruptcy(comp)
@@ -545,6 +586,7 @@ class Engine:
         for comp in self.companies:
             self._produce(comp)
         self._market()
+        self._emit_flows(cash_start)
         self.tick += 1
         if self.tick % 12 == 0:
             self._snapshot()
