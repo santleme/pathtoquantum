@@ -80,14 +80,16 @@ class Company:
         return fac
 
 
-def make_companies(n: int, rng, start_cash: float = 40_000_000.0) -> list[Company]:
+def make_companies(n: int, rng, start_cash: float = 40_000_000.0,
+                   cities: list | None = None) -> list[Company]:
+    cities = CITIES if cities is None else cities
     order = list(range(len(NAMES)))
     rng.shuffle(order)
     companies = []
     for i in range(n):
         k = order[i % len(order)]
         name_arch, traits = ARCHETYPES[k % len(ARCHETYPES)]
-        city = CITIES[i % len(CITIES)]
+        city = cities[i % len(cities)]
         companies.append(Company(
             cid=i, name=NAMES[k], archetype=name_arch, traits=dict(traits),
             hq_city=city.name, color=PALETTE[i % len(PALETTE)],

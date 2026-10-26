@@ -16,7 +16,7 @@ from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, make_companies
 from .tools_sim import (INSTA_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
                         insta_campaign_cost, zap_campaign_cost)
-from .world import CITIES, DEPOSITS, Deposit
+from .world import CITIES, DEPOSITS, City, Deposit
 
 START_YEAR = 2027
 _COMMODITIES_SORTED = sorted(chain.COMMODITIES)
@@ -286,20 +286,45 @@ def _company_from_state(cs: dict) -> Company:
     return comp
 
 
+def _resolve_world(world_data: bool):
+    """(deposits, cities, source) do mundo.
+
+    Fonte preferencial: o dataset real (data/world_data.json via
+    mundo.realdata — tamanhos/teores calibrados de figuras públicas com
+    fonte). Fallback automático para os valores embutidos do v0 quando o
+    dataset não está disponível ou é inválido (ex.: bundle do Kaggle só
+    com src/), ou quando world_data=False.
+    """
+    if world_data:
+        try:
+            from . import realdata
+            data = realdata.load_world_data()
+            return (realdata.to_world_deposits(data),
+                    realdata.to_world_cities(data), "realdata")
+        except Exception:
+            pass
+    return copy.deepcopy(DEPOSITS), list(CITIES), "builtin"
+
+
 class Engine:
     def __init__(self, seed: int = 42, n_companies: int = 8,
                  god_events: list[dict] | None = None,
-                 policy: Policy | None = None):
+                 policy: Policy | None = None,
+                 world_data: bool = True):
         self.policy = policy if policy is not None else HeuristicPolicy()
         self.rng = random.Random(seed)
         self.seed = seed
         self.tick = 0
         self.chronicle = Chronicle(START_YEAR)
-        self.deposits: list[Deposit] = copy.deepcopy(DEPOSITS)
+        deposits, cities, source = _resolve_world(world_data)
+        self.world_source = source
+        self.cities: list[City] = cities
+        self.deposits: list[Deposit] = copy.deepcopy(deposits)
         self._rebuild_caches()
         self.remaining = {d.name: d.size_t for d in self.deposits}
         self.claimed_by: dict[tuple, int] = {}       # cell -> cid dono
-        self.companies: list[Company] = make_companies(n_companies, self.rng)
+        self.companies: list[Company] = make_companies(
+            n_companies, self.rng, cities=self.cities)
         self.prices = dict(chain.BASE_PRICES)
         self.demand_factors: dict[str, tuple[float, int]] = {}
         self.god_events = sorted(god_events or [], key=lambda e: e["tick"])
@@ -332,7 +357,7 @@ class Engine:
         em _produce/_pick_deposit/_build_downstream. Depósitos novos
         (evento de Deus) entram no índice em _apply_god_events."""
         self._deposit_by_name = {d.name: d for d in self.deposits}
-        self._city_by_name = {c.name: c for c in CITIES}
+        self._city_by_name = {c.name: c for c in self.cities}
 
     # -- utilidades de ledger -------------------------------------------
     def _flow(self, cid: int, key: str, amount: float) -> None:
@@ -703,6 +728,10 @@ class Engine:
             "seed": self.seed,
             "tick": self.tick,
             "rng_state": _rng_to_json(self.rng.getstate()),
+            "world_source": self.world_source,
+            "cities": [{"name": c.name, "lat": c.lat, "lon": c.lon,
+                        "demand_weight": c.demand_weight}
+                       for c in self.cities],
             "deposits": [{"name": d.name, "resource": d.resource,
                           "lat": d.lat, "lon": d.lon, "size_t": d.size_t,
                           "grade": d.grade} for d in self.deposits],
@@ -742,6 +771,12 @@ class Engine:
         eng.deposits = [Deposit(d["name"], d["resource"], d["lat"], d["lon"],
                                 d["size_t"], d["grade"])
                         for d in state["deposits"]]
+        if "cities" in state:
+            eng.cities = [City(c["name"], c["lat"], c["lon"],
+                               c["demand_weight"]) for c in state["cities"]]
+            eng.world_source = state.get("world_source", "builtin")
+        else:  # state antigo, sem cidades serializadas: resolve de novo
+            _, eng.cities, eng.world_source = _resolve_world(True)
         eng._rebuild_caches()
         eng.remaining = dict(state["remaining"])
         eng.claimed_by = {tuple(cell): cid

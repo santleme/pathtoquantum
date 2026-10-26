@@ -131,6 +131,46 @@ def test_snapshot_restore_mid_run_identical():
     assert resumed["chronicle"] == ref["chronicle"]
 
 
+def test_engine_prefers_realdata_with_fallback():
+    from mundo import realdata
+    from mundo.world import DEPOSITS
+    eng = Engine(seed=7, n_companies=8)              # padrão: dataset real
+    assert eng.world_source == "realdata"
+    adapted = {d.name: d for d in
+               realdata.to_world_deposits(realdata.load_world_data())}
+    for d in eng.deposits:
+        assert d.size_t == adapted[d.name].size_t
+        assert d.grade == adapted[d.name].grade
+    off = Engine(seed=7, n_companies=8, world_data=False)
+    assert off.world_source == "builtin"
+    assert {d.name: d.size_t for d in off.deposits} == \
+        {d.name: d.size_t for d in DEPOSITS}
+
+
+def test_fallback_preserves_v0_baseline():
+    # com world_data=False o mundo é bit-idêntico ao v0 original
+    # (sha256 do placar do smoke seed 7/24 ticks, calculado na baseline)
+    import hashlib
+    eng = Engine(seed=7, n_companies=8, world_data=False)
+    res = eng.run(24)
+    digest = hashlib.sha256(json.dumps(
+        res["scoreboard"], sort_keys=True, ensure_ascii=False,
+        default=str).encode()).hexdigest()[:16]
+    assert digest == "018ae10a9d47584a"
+
+
+def test_snapshot_restore_with_realdata():
+    eng = Engine(seed=7, n_companies=8)              # fonte realdata
+    for _ in range(12):
+        eng.step()
+    state = json.loads(json.dumps(eng.state_dict()))
+    resumed = Engine.from_state(state).run(12)
+    ref = Engine(seed=7, n_companies=8).run(24)
+    assert resumed["scoreboard"] == ref["scoreboard"]
+    assert resumed["frames"] == ref["frames"]
+    assert resumed["chronicle"] == ref["chronicle"]
+
+
 def test_snapshot_restore_with_god_events():
     ev = [{"tick": 15, "type": "price_shock", "commodity": "copper",
            "factor": 0.6, "duration": 5},
