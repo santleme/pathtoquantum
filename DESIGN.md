@@ -1,4 +1,8 @@
-# MUNDO AUTÔNOMO — design v0
+# PATH TO QUANTUM — design v0
+
+> Nome dado pelo fundador (o projeto nasceu como "Mundo Autônomo").
+> A jornada do mundo tem eras nomeadas — §"As eras do mundo", abaixo.
+> Documentos irmãos: `docs/PRD.md` (produto) e `docs/SDD.md` (sistema).
 
 ## A visão (nas palavras do fundador)
 
@@ -41,6 +45,23 @@ Se dinheiro não existisse, é isto que ele construiria. Então é isto.
 - **Deus**: seed, nº de empresas e eventos injetáveis (choque de preço,
   descoberta, sanção) por config/CLI.
 
+## As eras do mundo
+
+A história deste mundo é uma corrida por uma árvore de produção, e ela
+se organiza em eras nomeadas pelo fundador:
+
+- **Era 1 — The Path to the Supercomputer**: a corrida pelo
+  supercomputador. É a era implementada no v0: minério/petróleo →
+  refinado → componente → dispositivo → supercomputador. Quem fecha a
+  Era 1 prova que uma empresa autônoma consegue industrializar um planeta
+  começando de uma picareta.
+- **Era 2 — Path to Quantum**: a corrida pelo computador quântico — e o
+  nome do projeto inteiro, porque é ela a corrida de fundo. Os elos além
+  do supercomputador (semicondutores avançados, criogenia, materiais
+  exóticos) entram em versões futuras; desde já, é a Era 2 que dá
+  sentido à Era 1: ninguém corre pelo supercomputador, corre pelo que
+  vem depois dele.
+
 ## Arquitetura
 
 `src/mundo/`: `world.py` (mapa/dados reais) · `chain.py` (árvore de
@@ -48,6 +69,7 @@ produção, preços, instalações) · `companies.py` (agentes/personalidades) �
 `tools_sim.py` (InstaSim/ZapSim) · `engine.py` (ticks, mercado, ledger de
 conservação) · `chronicle.py` (eventos/história) · `cli.py` (o painel de
 Deus). `viewer/index.html`: player dos frames (mapa, placar, crônica).
+Desenho completo do sistema em `docs/SDD.md`.
 
 ## Regra de computação
 
