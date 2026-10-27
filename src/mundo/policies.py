@@ -15,6 +15,9 @@ driver para os processos filhos:
 - ``kind="genome"`` — ``GenomePolicy`` com o ``genome`` dado;
 - ``kind="mutant"`` — mutante determinístico do genoma 0: a ``seed``
   e o ``sigma`` (em z) SÃO a identidade do mutante.
+- ``kind="program"`` — política-código da forja (Degrau 2): o arquivo
+  em ``program_path`` define ``EvolvedPolicy``; ``program_hash`` é a
+  identidade (validado na carga, pela guarda de ``mundo.program``).
 """
 from __future__ import annotations
 
@@ -26,14 +29,26 @@ from .genome import GENOME0, GenomePolicy, mutate
 
 @dataclass(frozen=True)
 class PolicySpec:
-    kind: str = "v0"                      # "v0" | "genome" | "mutant"
+    kind: str = "v0"                      # "v0" | "genome" | "mutant" | "program"
     genome: tuple | None = None           # kind="genome"
     seed: int | None = None               # kind="mutant"
     sigma: float = 0.35                   # kind="mutant" (em espaço z)
+    program_path: str | None = None       # kind="program"
+    program_hash: str | None = None       # kind="program"
 
     @staticmethod
     def v0() -> "PolicySpec":
         return PolicySpec("v0")
+
+    @staticmethod
+    def program(path) -> "PolicySpec":
+        from pathlib import Path
+
+        from .program import program_hash
+        p = Path(path)
+        return PolicySpec("program", program_path=str(p),
+                          program_hash=program_hash(
+                              p.read_text(encoding="utf-8")))
 
     @staticmethod
     def of_genome(genome) -> "PolicySpec":
@@ -51,6 +66,14 @@ def build_policy(spec: PolicySpec) -> Policy:
         return GenomePolicy(spec.genome)
     if spec.kind == "mutant":
         return GenomePolicy(mutate(GENOME0, spec.seed, spec.sigma))
+    if spec.kind == "program":
+        from .program import load_program_policy
+        policy = load_program_policy(spec.program_path)
+        if spec.program_hash and policy.program_hash != spec.program_hash:
+            raise ValueError(
+                f"programa mudou desde a spec: hash {policy.program_hash} "
+                f"!= {spec.program_hash}")
+        return policy
     raise ValueError(f"PolicySpec.kind desconhecido: {spec.kind!r}")
 
 

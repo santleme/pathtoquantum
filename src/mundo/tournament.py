@@ -133,8 +133,12 @@ _F1_CYCLE = ("v0", "v0", "v0", "v0", "mut", "mut", "league", "league")
 
 
 def field_specs(genome, field: str, focal_cid: int, block_index: int,
-                block_seed: int, league=()) -> tuple:
+                block_seed: int, league=(), focal_spec=None) -> tuple:
     """As PolicySpecs de um bloco: focal = ``genome``; rivais por campo.
+
+    ``focal_spec`` (forja, Degrau 2) substitui a focal-genoma por uma
+    spec qualquer (ex.: ``PolicySpec.program(...)``); os rivais seguem
+    exatamente as mesmas regras de campo.
 
     - F0: todos os rivais v0.
     - F1: ciclo de 8 posições (50% v0, 25% mutantes, 25% liga) girando
@@ -145,7 +149,8 @@ def field_specs(genome, field: str, focal_cid: int, block_index: int,
     specs = []
     for cid in range(N_COMPANIES):
         if cid == focal_cid:
-            specs.append(PolicySpec.of_genome(genome))
+            specs.append(focal_spec if focal_spec is not None
+                         else PolicySpec.of_genome(genome))
             continue
         slot = cid if cid < focal_cid else cid - 1   # índice entre rivais
         if field == "F0":
