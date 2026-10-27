@@ -135,3 +135,29 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   `notebooks/kernel-metadata-forge-v1-src13.json`. Protocolo
   inalterado: 300 iterações, 5 ilhas, cascata e avaliação cega nas
   seeds 9901–9932 com a mesma régua de veredito.
+
+## Version 7 — veredito (27/10/2026)
+
+- **Lançamento**: 13:32:42 -03, Save & Run All pelo editor web;
+  concluída com sucesso em 323,9 s. Bundle confirmado de
+  `mundo-autonomo-src-13`; sonda: GEMINI_API_KEY e GROQ_API_KEY
+  **presentes**. Código do notebook intocado (diff +0 −0).
+- **A correção de modelos funcionou**: a iteração 001 foi aceita via
+  `gemini/gemini-3-flash-preview` (`prog:98cd636f8cad`, S1=0,4336).
+- **Novo gargalo — cota/ritmo (HTTP 429)**: as outras 299 iterações
+  foram `rejected_llm`; as 4 rotas foram tentadas em quase todas
+  (calls: 300/300 Gemini, 299/299 Groq; fallbacks 898) e todas
+  falharam, com erro dominante 429 ("You exceeded your…"). O driver
+  dispara ~1.200 chamadas em ~3,5 min, sem ritmo nem backoff —
+  qualquer free tier estrangula essa rajada. (A busca local do Plano
+  B não bateu nesse muro porque a avaliação lenta da VM espaçava as
+  chamadas naturalmente; o transporte local tinha retry com backoff,
+  o do Kaggle não tem.)
+- **Veredito impresso**: FORGE-V1: REPROVADO/AJUSTAR. Campeão = a
+  semente `prog:fcf3162c8751` (o único filho aceito pontuou menos);
+  contagens {accepted: 1, rejected_guard: 0, rejected_llm: 299,
+  error: 0}; ΔS vs torneio −0,0750, IC95 [−0,1153, −0,0339].
+  Experimento **inválido de novo como teste da hipótese** — agora
+  por infraestrutura de cota, não por modelo. Próximo passo
+  proposto: portar ritmo + retry/backoff do transporte local para o
+  mutador do Kaggle e relançar (decisão do fundador).
