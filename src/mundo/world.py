@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# Grade: lat de -56 a 14, lon de -82 a -32, células de 2.5 graus.
-LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, CELL = -56.0, 14.0, -82.0, -32.0, 2.5
-ROWS = int((LAT_MAX - LAT_MIN) / CELL)  # 28
-COLS = int((LON_MAX - LON_MIN) / CELL)  # 20
+# Grade: lat de -56 a 19, lon de -82 a -27, células de 2.5 graus.
+# v1 ampliou a grade para o norte (Caribe/Guianas) e para o Atlântico
+# mantendo LAT_MIN/LON_MIN/CELL — as células de tudo que já existia no
+# v0 (lat <= 14, lon <= -32) NÃO mudam de (linha, coluna).
+LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, CELL = -56.0, 19.0, -82.0, -27.0, 2.5
+ROWS = int((LAT_MAX - LAT_MIN) / CELL)  # 30
+COLS = int((LON_MAX - LON_MIN) / CELL)  # 22
 
 
 def cell_of(lat: float, lon: float) -> tuple[int, int]:
