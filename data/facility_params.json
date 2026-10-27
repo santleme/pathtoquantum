@@ -1,0 +1,77 @@
+{
+ "compiled_at": "2026-10-26",
+ "facilities": {
+  "assembly": {
+   "beta": 1.6,
+   "calibration_note": "Montadora de supercomputadores: ambiente limpo e controlado — menor desgaste, η=60 meses -> MTBF ≈ 54 meses.",
+   "eta_months": 60,
+   "wear_rate": 0.007
+  },
+  "factory": {
+   "beta": 1.6,
+   "calibration_note": "Fábrica de componentes: η=46 meses -> MTBF ≈ 41 meses.",
+   "eta_months": 46,
+   "wear_rate": 0.01
+  },
+  "mine": {
+   "beta": 1.6,
+   "calibration_note": "Mina a céu aberto/subterrânea: ambiente abrasivo — maior desgaste por mês operado. Weibull β=1,6 (frota de caminhões de mineração, estudo §B2); η=42 meses -> MTBF de planta nova ≈ 38 meses.",
+   "eta_months": 42,
+   "wear_rate": 0.016
+  },
+  "plant": {
+   "beta": 1.6,
+   "calibration_note": "Planta de dispositivos: η=46 meses -> MTBF ≈ 41 meses.",
+   "eta_months": 46,
+   "wear_rate": 0.01
+  },
+  "refinery": {
+   "beta": 1.6,
+   "calibration_note": "Refinaria: processo contínuo, desgaste moderado; η=50 meses -> MTBF ≈ 45 meses.",
+   "eta_months": 50,
+   "wear_rate": 0.012
+  }
+ },
+ "model": {
+  "age_derate": 0.15,
+  "age_derate_months": 240,
+  "hazard_scale": 1.0,
+  "maint_downtime_h": 0.3,
+  "maint_frac": 0.022,
+  "maint_restore": 0.5,
+  "note": "Calibração-alvo (estudo §B2): disponibilidade A = MTBF/(MTBF+MTTR) em ~80-85% para frotas rodadas até quebrar (idade cresce sem overhaul, hazard de Weibull sobe, reparo espera caixa) e ~92-95% para frotas mantidas (manutenção segura h e portanto a eficiência; overhaul zera a idade e o hazard). hazard_scale/wear_scale = 1,0 no mundo; são as alavancas de teste/Deus para forçar quebras e desgaste sem tocar no arquivo.",
+  "overhaul_frac": 0.6,
+  "repair_frac_max": 0.15,
+  "repair_frac_min": 0.08,
+  "repair_ticks_lognorm_mu": 0.0,
+  "repair_ticks_lognorm_sigma": 0.6,
+  "repair_ticks_max": 3,
+  "repair_ticks_min": 1,
+  "wear_scale": 1.0
+ },
+ "policy": {
+  "maint_h_base": 0.3,
+  "maint_h_care_span": 0.35,
+  "note": "A decisão é da política, os custos são do motor. care = 1 - aggression: limiar de manutenção preventiva h* = base + care*span (Agressiva ~0,34 roda até quebrar; Cautelosa ~0,55 mantém cedo); reparo de quebra é pago quando caixa-reserva > custo * mult, com mult interpolado de care0 (2,0) a care1 (1,0) — quem não cuida, adia o conserto; overhaul quando idade >= 150 meses e h <= 0,45.",
+  "overhaul_max_cond": 0.45,
+  "overhaul_min_age": 150,
+  "repair_mult_care0": 2.0,
+  "repair_mult_care1": 1.0
+ },
+ "purpose": "Parâmetros dos equipamentos (B2, Degrau 1 Fase 4): desgaste, hazard de quebra de Weibull, reparo, manutenção preventiva e overhaul por tipo de instalação. DADO versionado com fontes (DEGRAU1-DESIGN §4/B2; ESTUDO-MOTOR-AMBIENTE §B2) — calibrar é editar este arquivo, nunca o motor.",
+ "schema_version": 1,
+ "sources": [
+  {
+   "date": "2015-2025",
+   "publisher": "Literatura de confiabilidade de frotas de mineração (Weibull β≈1,62 em caminhões; disponibilidade medida de frotas escavadeira-caminhão 77-78%, operações boas 85%+)",
+   "title": "apud ESTUDO-MOTOR-AMBIENTE §B2 (docs/ESTUDO-MOTOR-AMBIENTE.md)",
+   "url": ""
+  },
+  {
+   "date": "2026-10-26",
+   "publisher": "Path to Quantum",
+   "title": "DEGRAU1-DESIGN §4/B2 — fórmula mínima: cap_efetiva = capacity*h*(1-0,15*min(1, age/240)); hazard Weibull β≈1,6; reparo 1-3 ticks a 8-15% do custo; PM 1,5-3% restaura h em +0,5; overhaul 60% zera idade e h",
+   "url": ""
+  }
+ ]
+}
