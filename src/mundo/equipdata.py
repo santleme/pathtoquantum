@@ -30,32 +30,32 @@ _DEFAULT_JSON = r"""{
  "facilities": {
   "assembly": {
    "beta": 1.6,
-   "calibration_note": "Montadora de supercomputadores: ambiente limpo e controlado — menor desgaste, η=60 meses -> MTBF ≈ 54 meses.",
-   "eta_months": 60,
+   "calibration_note": "Montadora de supercomputadores: ambiente limpo e controlado — menor desgaste, η=48 meses -> MTBF ≈ 43 meses.",
+   "eta_months": 48,
    "wear_rate": 0.007
   },
   "factory": {
    "beta": 1.6,
-   "calibration_note": "Fábrica de componentes: η=46 meses -> MTBF ≈ 41 meses.",
-   "eta_months": 46,
+   "calibration_note": "Fábrica de componentes: η=36,8 meses -> MTBF ≈ 33 meses.",
+   "eta_months": 36.8,
    "wear_rate": 0.01
   },
   "mine": {
    "beta": 1.6,
-   "calibration_note": "Mina a céu aberto/subterrânea: ambiente abrasivo — maior desgaste por mês operado. Weibull β=1,6 (frota de caminhões de mineração, estudo §B2); η=42 meses -> MTBF de planta nova ≈ 38 meses.",
-   "eta_months": 42,
+   "calibration_note": "Mina a céu aberto/subterrânea: ambiente abrasivo — maior desgaste por mês operado. Weibull β=1,6 (frota de caminhões de mineração, estudo §B2); η=33,6 meses -> MTBF de planta nova ≈ 30 meses.",
+   "eta_months": 33.6,
    "wear_rate": 0.016
   },
   "plant": {
    "beta": 1.6,
-   "calibration_note": "Planta de dispositivos: η=46 meses -> MTBF ≈ 41 meses.",
-   "eta_months": 46,
+   "calibration_note": "Planta de dispositivos: η=36,8 meses -> MTBF ≈ 33 meses.",
+   "eta_months": 36.8,
    "wear_rate": 0.01
   },
   "refinery": {
    "beta": 1.6,
-   "calibration_note": "Refinaria: processo contínuo, desgaste moderado; η=50 meses -> MTBF ≈ 45 meses.",
-   "eta_months": 50,
+   "calibration_note": "Refinaria: processo contínuo, desgaste moderado; η=40 meses -> MTBF ≈ 36 meses.",
+   "eta_months": 40,
    "wear_rate": 0.012
   }
  },
@@ -70,10 +70,10 @@ _DEFAULT_JSON = r"""{
   "overhaul_frac": 0.6,
   "repair_frac_max": 0.15,
   "repair_frac_min": 0.08,
-  "repair_ticks_lognorm_mu": 0.0,
+  "repair_ticks_lognorm_mu": 0.7,
   "repair_ticks_lognorm_sigma": 0.6,
-  "repair_ticks_max": 3,
-  "repair_ticks_min": 1,
+  "repair_ticks_max": 6,
+  "repair_ticks_min": 2,
   "wear_scale": 1.0
  },
  "policy": {

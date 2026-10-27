@@ -51,7 +51,8 @@ def test_equip_params_match_the_design():
         assert v["calibration_note"]
     m = p["model"]
     assert m["repair_frac_min"] == 0.08 and m["repair_frac_max"] == 0.15
-    assert m["repair_ticks_min"] == 1 and m["repair_ticks_max"] == 3
+    assert m["repair_ticks_min"] == 2 and m["repair_ticks_max"] == 6
+    assert m["repair_ticks_lognorm_mu"] == 0.7   # recalibração pós-veredito B2
     assert 0.015 <= m["maint_frac"] <= 0.03      # PM: 1,5–3% do custo
     assert m["maint_restore"] == 0.5
     assert m["overhaul_frac"] == 0.6             # overhaul: 60% do custo
@@ -210,7 +211,7 @@ def test_forced_break_stops_production_and_counts_downtime():
     eq = fac["equip"]
     assert eq["broken"] is True
     assert 0.08 * 2_500_000 <= eq["repair_cost"] <= 0.15 * 2_500_000
-    assert 1 <= eq["repair_ticks"] <= 3
+    assert 2 <= eq["repair_ticks"] <= 6
     ev = [e for e in eng.chronicle.events if e.kind == "breakdown"]
     assert len(ev) == 1 and ev[0].data["fid"] == fac["id"]
     assert "QUEBRA" in ev[0].text

@@ -385,3 +385,53 @@ do nascimento).
   para `results/veredito-b1/` é do monitor do B1). A adoção do B1
   como oficial segue a régua: veredito aprovado → mercado vivo vira
   o padrão na próxima consolidação do motor.
+
+## Fase 4 — Recalibração do B2 pós-veredito v1 (26/10/2026)
+
+**Veredito B2 v1: REPROVADO/AJUSTAR por um único portão.** A
+disponibilidade da frota ON ficou em 0,953–0,963, acima do teto 0,95
+da faixa pré-registrada [0,78; 0,95] (0/4 seeds nesse critério). Todo
+o resto passou: salientes ON > OFF em 4/4, 91–102 quebras por corrida
+ON, ledgers fechando, ≥ 4 empresas vivas, nenhum arquétipo falido em
+todas as seeds. Diagnóstico do próprio notebook: a frota quebra
+bastante, mas o reparo devolve rápido demais.
+
+**Ajuste — só as alavancas nomeadas no pré-registro** (η menor e
+oficina mais longa); nenhuma mecânica nova, nenhum parâmetro fora de
+`data/facility_params.json` + fallback em `src/mundo/equipdata.py`
+(regenerado do JSON; a identidade dos dois é garantida por teste):
+
+- **η de Weibull × 0,8 em todos os tipos** (MTBF = η·Γ(1 + 1/β),
+  β = 1,6, cai na mesma proporção): assembly 60 → 48 meses
+  (MTBF ≈ 54 → 43), factory 46 → 36,8 (≈ 41 → 33), mine 42 → 33,6
+  (≈ 38 → 30), plant 46 → 36,8 (≈ 41 → 33), refinery 50 → 40
+  (≈ 45 → 36). Notas de calibração do JSON atualizadas juntas.
+- **Oficina mais longa**: `repair_ticks_min` 1 → 2,
+  `repair_ticks_max` 3 → 6 e `repair_ticks_lognorm_mu` 0,0 → 0,7
+  (σ = 0,6 inalterado). O μ faz parte da mesma alavanca "duração da
+  oficina": a duração sorteada é `round(LogNormal(μ, σ))` com clamp
+  em [min, max] — só mover o clamp mal mudaria a média, porque a
+  distribuição vive ancorada na mediana e^μ = 1.
+
+**Aritmética da estimativa (1ª ordem).** E[reparo] sobe de 1,31 para
+2,67 ticks (× 2,04); a taxa de quebras por mês operado sobe × 1,25
+(MTBF × 0,8); o downtime esperado sobe ≈ × 2,55. Aplicado à
+indisponibilidade observada na v1 (0,037–0,047): nova indisponibilidade
+≈ 0,094–0,120 → **disponibilidade prevista ≈ 0,88–0,91**, no meio da
+faixa-alvo 0,88–0,92 e com margem dos dois lados do portão [0,78; 0,95].
+Ressalvas: estimativa de 1ª ordem — ignora que planta quebrada não
+envelhece nem desgasta enquanto espera, e o tempo de espera pela
+decisão de reparo da política (inalterado pelas alavancas).
+
+**Testes.** Suíte 144/144 verde. Atualizados os testes que travavam
+os valores antigos em `tests/test_equip_v2.py` (clamp 1–3 → 2–6 em
+`test_equip_params_match_the_design` e no reparo forçado de
+`test_forced_break_stops_production_and_counts_downtime`; pin novo
+do μ = 0,7). Goldens da Fase 1 intactos — com a flag desligada o
+motor segue bit-idêntico, como a suíte prova.
+
+**Preparo do relançamento.** Bundle novo
+`pascalcoimbra/mundo-autonomo-src7` com o fonte recalibrado
+(verificado por download) e `notebooks/kernel-metadata-b2.json`
+apontando para ele. O push do kernel é etapa posterior: o monitor
+da v1 fecha a coleta dela antes.
