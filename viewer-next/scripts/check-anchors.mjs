@@ -1,6 +1,7 @@
-// Âncoras da SPEC-VISUAL-WOW §8.2 para a fatia F2 (VIS-03/04): lê os JSONs servidos
-// e confere contagem de kinds, os 119 itens narrativos do frame final e o lote de
-// novos do avanço 0→12. Sai com código != 0 se alguma âncora divergir.
+// Âncoras da SPEC-VISUAL-WOW §8.2 para as fatias F2 (VIS-03/04) e F3 (VIS-08):
+// lê os JSONs servidos e confere contagem de kinds, os 119 itens narrativos do
+// frame final, o lote de novos do avanço 0→12 e a ordem/caixa/elos do placar
+// final contra scoreboard.json. Sai com código != 0 se alguma âncora divergir.
 // Uso: node scripts/check-anchors.mjs
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -8,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const frames = JSON.parse(readFileSync(join(here, '../../viewer/frames.json'), 'utf8'));
+const scoreboard = JSON.parse(readFileSync(join(here, '../../viewer/scoreboard.json'), 'utf8'));
 const ch = frames.chronicle;
 
 const counts = {};
@@ -32,9 +34,27 @@ const anchors = [
   ['chain_link ticks', JSON.stringify(ch.filter((e) => e.kind === 'chain_link').map((e) => e.tick)), JSON.stringify([1, 2, 5, 8])],
 ];
 
+// --- Âncoras F3 (VIS-08): placar do frame final × scoreboard.json ---
+const fmt = (v) => `US$ ${(v / 1e6).toFixed(1).replace('.', ',')}M`;
+const finalFrame = frames.frames[frames.frames.length - 1];
+const prevFrame = frames.frames[frames.frames.length - 2];
+const ranked = [...finalFrame.companies].sort((a, b) => b.cash - a.cash);
+const prevCash = new Map(prevFrame.companies.map((c) => [c.id, c.cash]));
+const anchorsF3 = [
+  ['placar: ordem = scoreboard.json', JSON.stringify(ranked.map((c) => c.name)), JSON.stringify(scoreboard.map((s) => s.name))],
+  ['placar: caixa bate com scoreboard (todas)', ranked.every((c) => Math.abs(c.cash - scoreboard.find((s) => s.name === c.name).cash) < 0.01), true],
+  ['placar 1º: Vetor Sul', `${ranked[0].name} ${fmt(ranked[0].cash)}`, 'Vetor Sul US$ 273,0M'],
+  ['placar 2º: Ferra Brasil', `${ranked[1].name} ${fmt(ranked[1].cash)}`, 'Ferra Brasil US$ 70,2M'],
+  ['placar 3º: Cuprum Andes', `${ranked[2].name} ${fmt(ranked[2].cash)}`, 'Cuprum Andes US$ 60,2M'],
+  ['placar 8º: Órbita Systems', `${ranked[7].name} ${fmt(ranked[7].cash)}`, 'Órbita Systems US$ 15,9M'],
+  ['segmentos de elo (stage) na ordem do placar', JSON.stringify(ranked.map((c) => c.stage)), JSON.stringify([4, 2, 4, 0, 2, 0, 4, 4])],
+  ['Δ Vetor Sul no frame final', fmt(ranked[0].cash - prevCash.get(ranked[0].id)), 'US$ 32,9M'],
+  ['Δ PetroPlata negativo', ranked.find((c) => c.name === 'PetroPlata').cash - prevCash.get(ranked.find((c) => c.name === 'PetroPlata').id) < 0, true],
+];
+
 let fail = 0;
 console.log('kind counts:', JSON.stringify(counts));
-for (const [name, got, want] of anchors) {
+for (const [name, got, want] of [...anchors, ...anchorsF3]) {
   const ok = got === want;
   if (!ok) fail++;
   console.log(`${ok ? 'OK ' : 'FAIL'} ${name}: ${got} (esperado ${want})`);
@@ -43,4 +63,4 @@ if (fail) {
   console.error(`\n${fail} âncora(s) divergem — defeito da fatia, não do script (SPEC §8.2).`);
   process.exit(1);
 }
-console.log('\nTodas as âncoras F2 conferem.');
+console.log('\nTodas as âncoras F2+F3 conferem.');
