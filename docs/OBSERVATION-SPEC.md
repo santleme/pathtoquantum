@@ -261,13 +261,137 @@ Decisões de formato, com o critério **menor ruptura + bit-exatidão**:
   replay bit-idêntico fotografando toda decisão (clássico e mundo
   vivo completo) e janela == anel público do motor.
 
-### Fatia 3 — Intentions declarativas (o esboço literal do SDD §6.2)
+### Fatia 3 — Intentions declarativas (o esboço literal do SDD §6.2) (FEITA)
 
-- `decide(obs) -> Intentions`; o motor aplica as intenções na ordem
-  canônica. Habilita replay de decisões e políticas que não executam
-  código no caminho quente.
-- Aceitação: goldens re-provados bit a bit OU regravação explícita
-  com decisão registrada (nunca silenciosa).
+`decide(obs) -> list[Intention]`: a política não executa verbo
+nenhum durante a decisão — ela **declara** uma lista ordenada de
+intenções (dados puros, congelados, serializáveis) e o motor valida
+e executa. Decisão vira artefato: dá para gravar, serializar em
+JSON, desserializar e reaplicar — e a política perde qualquer
+capacidade de efeito colateral fora da lista declarada (na
+observação de decisão, `obs.act` é um selo que levanta erro; em
+programas da forja, a guarda bane `.act` no fonte).
+
+**O vocabulário** (`src/mundo/intentions.py`) é o espelho 1:1 dos
+verbos do `Actuator` — inventário completo, nenhum verbo de fora:
+
+| Verbo (fatia 1) | Intenção | Campos |
+|---|---|---|
+| `spend(amount, reason)` | `Spend` | `amount`, `reason="spend"` |
+| `probe(name) -> (grade, size)` | `Probe` | `deposit`, `on_rich`, `on_poor`, `rich_threshold=0.78`, `poor_threshold=0.35` |
+| `register_claim(cell)` | `RegisterClaim` | `cell` |
+| `build_facility(kind, cell, deposit)` | `BuildFacility` | `kind`, `cell`, `deposit=None`, `narration=None` |
+| `narrate(kind, text, **extra)` | `Narrate` | `kind`, `text`, `extra` (via `Narration`) |
+| `note_link(stage)` | `NoteLink` | `stage` |
+| `repair(id)` / `maintain(id)` / `overhaul(id)` | `RepairFacility` / `MaintainFacility` / `OverhaulFacility` | `facility_id` |
+| `buy(c, q)` / `offer(c, q)` | `Buy` / `Offer` | `commodity`, `qty` |
+| `set_tool(tool, until, strength)` | `SetTool` | `tool`, `until`, `strength=None` |
+
+Formato: `@dataclass(frozen=True)` por intenção, no espírito do
+`_jsonify` da fatia 2 — `intention_to_dict`/`intention_from_dict`
+com tag `"type"`, round-trip por `json.dumps` provado em teste.
+`Narration` é a dataclass companheira (`kind`, `text`, `extra`
+como tupla de pares): é o que `Narrate` carrega e o que `Probe` e
+`BuildFacility` carregam como narração anexa.
+
+**Os dois verbos que devolviam valor no meio da decisão** viram
+dado, sem mudar a ordem de execução:
+
+- `probe` devolvia `(grade, size)` e a política narrava conforme o
+  teor (rica ≥ 0,78 / pobre ≤ 0,35). Nenhuma decisão estrutural da
+  heurística depende do par no mesmo tick (reivindicar é o ramo
+  `elif`, de conhecimento prévio) — então a intenção carrega as
+  DUAS narrações candidatas e os limiares, e o executor narra a que
+  o teor revelado selecionar, na mesma posição da sequência
+  (gasto → registro no knowledge → narração).
+- `build_facility` devolvia a view da instalação para a narração
+  usar o `fid` recém-criado — id que nasce na execução
+  (`f{cid}-{n}`). A intenção carrega a narração anexa SEM o `fid`;
+  o executor o injeta no `extra` ao narrar. E o
+  `note_link(chain_stage())` pós-construção do jusante vira uma
+  intenção `NoteLink` separada cujo `stage` a política calcula
+  sobre a sombra (abaixo) — o mesmo inteiro que o mundo verá.
+
+**A sombra de planejamento (`Plan`)** é o que mantém a equivalência
+bit a bit. Na era imperativa a política relê o mundo depois de agir
+dentro da mesma decisão (caixa após cada gasto do B2, `has()` e
+`chain_stage()` depois de construir, caixa vivo no ramo da
+montadora). Declarar tudo antes de executar qualquer coisa
+quebraria essas leituras — então as fases da heurística planejam
+contra uma sombra: `Plan.cash` (caixa como ficará após os gastos
+já declarados, deduzidos na ordem de declaração, com os custos que
+o motor cobraria — reparo/overhaul/manutenção têm custo conhecido
+na view) e `Plan.kinds` (tipos de instalação após as construções
+declaradas, de onde saem `has()`/`chain_stage()` da sombra). Cada
+fase devolve suas intenções e a sombra anda junto; o motor executa
+a lista na ordem declarada, que é a ordem de mutação de sempre.
+Duas fidelidades nomeadas: o `spendable` da fase de mineração
+continua **congelado** no caixa inicial (é o comportamento de
+hoje: ele é calculado antes da fase de equipamentos e NÃO abate
+os reparos), enquanto os testes de caixa das fases seguintes leem
+a sombra (o caixa "vivo" de hoje). Os sorteios continuam na
+decisão (`pick_deposit`, `use_tools` sorteiam ao planejar, na
+mesma ordem) — executar intenção não sorteia nada, então a ordem
+de consumo do RNG do episódio não muda um draw.
+
+**Execução pelo motor** (`Engine._apply_intentions`):
+
+1. **Validação total antes de qualquer execução** — atomicidade
+   por decisão: ou a lista inteira é válida e executa em ordem,
+   ou nada executa e a decisão levanta `IntentionError`. A
+   validação confere: o retorno é lista/tupla de instâncias das
+   classes de intenção (objeto forjado, mesmo com campos certos,
+   não é intenção — e campo privado/desconhecido nem constrói);
+   valores finitos e não-negativos onde há dinheiro/quantidade;
+   depósito e commodity do vocabulário do mundo; `facility_id`
+   entre as instalações **da focal** (intenção mirando instalação
+   de rival é rejeitada); célula de claim é célula de depósito e
+   não está reivindicada por rival; `kind` de construção existe;
+   ferramenta é uma das quatro simuladas; `stage` de `NoteLink`
+   entre 1 e 5.
+2. **Execução em ordem**, despachando cada intenção para o verbo
+   correspondente do `Actuator` (que continua sendo a ferramenta
+   do motor — os testes da fatia 1 o exercitam direto via
+   `build_observation` sem selo). `Probe` executa
+   gasto→knowledge→narração condicional; `BuildFacility` constrói
+   e narra com o `fid` injetado.
+
+**Migração e compatibilidade.**
+
+- `HeuristicPolicy` (e por herança `GenomePolicy`) e a semente da
+  forja retornam intenções; as fases (`maintain_equipment`,
+  `build_downstream`, `plan_buys`, `plan_sells`, `use_tools`)
+  mantêm os nomes e passam a **devolver** intenções (com a sombra
+  opcional de quem orquestra) — as fachadas do `Engine` e o
+  `PolicyRouter` despacham e aplicam como antes, com a mesma
+  superfície externa.
+- O loader da forja aceita o contrato novo sem mudar a checagem de
+  assinatura (`decide(self, obs)` — o que muda é o retorno): a
+  allowlist de imports ganha `mundo.intentions` (é de onde a
+  política-programa monta suas intenções) e a guarda soma `.act`
+  aos atributos banidos no fonte. Programa legado que devolve
+  `None` (contrato imperativo) é rejeitado pelo motor com
+  `IntentionError` explicando o contrato — rejeição clara, sem
+  efeito no mundo (a forge-v1 ainda não rodou; não há programa
+  vivo no contrato velho).
+
+**Aceitação da fatia 3 (testável):**
+
+- Goldens da Fase 1 intactos (`tests/test_golden.py` sem edição);
+  S da semente == S do genoma 0 e episódio da semente bit-idêntico,
+  sem edição dos testes que os provam.
+- Replay de decisões: serializar cada lista de intenções em JSON
+  e devolver a lista desserializada reproduz o episódio bit a bit
+  (clássico e mundo vivo completo).
+- Intenção inválida/maliciosa (gasto negativo, commodity fora do
+  vocabulário, reparo em instalação de rival, claim em célula de
+  rival, objeto forjado com campo privado) é rejeitada com
+  `IntentionError` e o mundo fica intacto — inclusive quando a
+  inválida vem depois de uma válida na mesma lista (atomicidade).
+- Intenções serializam em JSON e voltam idênticas (round-trip de
+  cada tipo do vocabulário).
+- `obs.act` durante a decisão levanta erro claro (selo); programa
+  da forja que toca `obs.act` é rejeitado na carga pela guarda.
 
 ### Fatia 4 — Aposentar a superfície v1
 

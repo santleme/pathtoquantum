@@ -144,11 +144,93 @@ hashes da Fase 1 intactos; S da semente e episódio bit-idêntico
 da fatia 1 sem edição e verdes. A heurística não lê as séries
 novas (só as expõe) — quem prova é a suíte inteira + o replay.
 
+## 2026-10-27 — Fatia 3 entregue
+
+**O contrato declarativo** (desenho completo na SPEC §4):
+`decide(obs)` devolve a lista ordenada de intenções e o motor
+valida e executa — a política não executa verbo nenhum durante a
+decisão e não tem efeito colateral fora da lista declarada.
+
+- `src/mundo/intentions.py` (novo): o vocabulário espelho 1:1 do
+  `Actuator` — `Spend`, `Probe`, `RegisterClaim`, `BuildFacility`,
+  `Narrate`, `NoteLink`, `RepairFacility`, `MaintainFacility`,
+  `OverhaulFacility`, `Buy`, `Offer`, `SetTool` — dataclasses
+  congeladas com serialização JSON (`intention_to_dict`/
+  `from_dict`, tag `"type"`, round-trip provado tipo a tipo) e a
+  companheira `Narration`. Os dois verbos que devolviam valor no
+  meio da decisão viraram dado: `Probe` carrega as narrações
+  candidatas (rica/pobre) e os limiares 0,78/0,35 — o executor
+  narra a que o teor revelado selecionar, na mesma posição da
+  sequência; `BuildFacility` carrega a narração anexa sem `fid` e
+  o executor injeta o id criado ao narrar.
+- **A sombra (`Plan`)** é o mecanismo da equivalência: caixa e
+  tipos de instalação como ficarão após as intenções já
+  declaradas. As fases da heurística testam limiares contra a
+  sombra — reparo do B2 abatendo o caixa do teste da instalação
+  seguinte, fábrica construída neste tick puxando compras e
+  buffer, caixa "vivo" no ramo da montadora, `chain_stage()` da
+  sombra virando o `NoteLink` pós-construção. Duas fidelidades
+  nomeadas: o `spendable` da mineração continua congelado no
+  caixa inicial (ele nasce antes da fase de equipamentos e não
+  abate reparos — comportamento de hoje, preservado de propósito)
+  e os sorteios seguem na decisão (planejar sorteia; executar
+  intenção, não) — a ordem de consumo do RNG não muda um draw.
+- `Engine._apply_intentions`: **validação total antes de qualquer
+  execução** (atomicidade por decisão) e execução em ordem via
+  `Actuator`. A validação rejeita com `IntentionError`: retorno
+  que não seja lista de intenções (programa legado devolvendo
+  `None` cai aqui, com a explicação do contrato), objeto forjado
+  que não seja instância das classes (campo privado/desconhecido
+  nem constrói numa dataclass congelada), gasto/quantidade
+  negativa ou não-finita, commodity/depósito/ferramenta fora do
+  vocabulário, reparo/manutenção/overhaul em instalação de
+  OUTRA empresa, claim em célula de rival ou fora de depósito,
+  construção com célula divergente do depósito, elo fora de 1–5.
+- O selo: a observação que o `decide` recebe nasce com
+  `sealed_act=True` — `obs.act` é um `SealedActuator` cujos verbos
+  levantam `RuntimeError` com o contrato. O `Actuator` de verdade
+  segue como ferramenta do executor e dos testes de verbos
+  (`build_observation` sem selo, fatia 1 intacta). Na forja, a
+  guarda soma `.act` aos atributos banidos e a allowlist ganha
+  `mundo.intentions`; a semente da geração 0 foi reescrita
+  declarativa espelhando a heurística, e o prompt do mutador
+  (`forge/config.yaml`) descreve o contrato novo.
+- Fases com os mesmos nomes, novo retorno: `maintain_equipment`,
+  `build_downstream` (devolve `(construiu?, intenções)`),
+  `plan_buys`, `plan_sells`, `use_tools` devolvem intenções e
+  aceitam a sombra de quem orquestra; fachadas do `Engine` e
+  `PolicyRouter` despacham e aplicam como antes.
+
+**Prova de que o mundo não mudou.**
+
+- Suíte: **232/232** (221 da fatia 2 + 11 novos em
+  `tests/test_intentions.py`). Na árvore compartilhada com a
+  frente do smoke foram 234 (os 2 testes de metadata dela).
+- `tests/test_golden.py` **sem edição**: os 4 hashes da Fase 1
+  intactos. `test_seed_generation0_bit_identical` e
+  `test_evaluator_seed_matches_genome0_score` **sem edição** e
+  verdes: S da semente == S do genoma 0; episódio da semente
+  bit-idêntico.
+- **Replay de decisões provado**: uma política que serializa cada
+  lista de intenções em JSON e devolve a desserializada reproduz
+  o episódio bit a bit (clássico e mundo vivo completo, 36
+  ticks, `state_dict` inteiro).
+- Doubles migrados sem tocar asserções (`NullPolicy` devolve
+  `[]`, `RecordingPolicy` propaga o retorno). Os dois doubles
+  "suicidas" (`test_hardening`, `test_v1`) agora declaram o
+  `Spend` devastador em vez de executá-lo: o montante passa a ser
+  calculado sobre o caixa do início da decisão (é o dado do
+  plano — na execução ele sai depois dos gastos da própria
+  heurística, como antes) e a falência/causa seguem as mesmas —
+  as asserções não fixam o montante e seguem verdes sem edição.
+- Nota operacional: esta fatia foi construída com o clone
+  compartilhado trocado de branch por outra frente no meio da
+  sessão (`noite/prep-smoke-forja`); o trabalho foi isolado num
+  worktree próprio da `obs/guarda-v2` e a árvore principal foi
+  devolvida como encontrada.
+
 ## O que falta (fatias seguintes da SPEC §4)
 
-- **Fatia 3**: `Intentions` declarativas como retorno do `decide`
-  (replay de decisões; re-provar goldens ou regravar com decisão
-  explícita).
 - **Fatia 4**: aposentar as fachadas legadas do `Engine` e os
   canais v1 da guarda (`comp._offers/_buys`, `engine.claimed_by`)
   quando nenhum programa vivo depender deles.
