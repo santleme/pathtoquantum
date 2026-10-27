@@ -5,16 +5,8 @@ import type { ChronicleEvent } from './contracts';
 
 export type Tier = 'marco' | 'estrutural' | 'fundacao' | 'rotina' | 'contabil';
 
-/** Ordem da hierarquia da spec (VIS-03): marco > estrutural > fundação > rotina > contábil. */
-export const TIER_RANK: Record<Tier, number> = { marco: 0, estrutural: 1, fundacao: 2, rotina: 3, contabil: 4 };
-
-export const TIER_LABELS: Record<Tier, string> = {
-  marco: 'Marco',
-  estrutural: 'Estrutura',
-  fundacao: 'Fundação',
-  rotina: 'Rotina',
-  contabil: 'Contábil',
-};
+// Hierarquia da spec (VIS-03): marco > estrutural > fundação > rotina > contábil —
+// expressa no runtime pelas classes CSS tier-* de index.html, não por rank numérico.
 
 interface KindMeta {
   tier: Tier;

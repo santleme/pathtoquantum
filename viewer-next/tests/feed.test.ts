@@ -6,7 +6,6 @@ import {
   narrativeItems,
   newItemIndexes,
   tickFromFeedTarget,
-  TIER_RANK,
 } from '../src/feed';
 import servedFrames from '../../viewer/frames.json';
 
@@ -29,10 +28,15 @@ describe('classificação por kind (VIS-03)', () => {
     for (const k of ['founding', 'probe']) expect(classifyKind(k).tier, k).toBe('fundacao');
     for (const k of ['tool', 'god']) expect(classifyKind(k).tier, k).toBe('rotina');
     expect(classifyKind('flows').tier).toBe('contabil');
-    expect(TIER_RANK.marco).toBeLessThan(TIER_RANK.estrutural);
-    expect(TIER_RANK.estrutural).toBeLessThan(TIER_RANK.fundacao);
-    expect(TIER_RANK.fundacao).toBeLessThan(TIER_RANK.rotina);
-    expect(TIER_RANK.rotina).toBeLessThan(TIER_RANK.contabil);
+    // A hierarquia é a classificação kind→tier que o runtime usa (classes tier-*):
+    // um kind representativo por nível, na ordem da spec.
+    expect(['chain_link', 'facility', 'founding', 'tool', 'flows'].map((k) => classifyKind(k).tier)).toEqual([
+      'marco',
+      'estrutural',
+      'fundacao',
+      'rotina',
+      'contabil',
+    ]);
   });
 
   it('cada kind conhecido tem rótulo pt-BR e ícone SVG próprio (sem emoji)', () => {
