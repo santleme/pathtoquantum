@@ -3,8 +3,9 @@
 Nenhuma chave real, nenhuma rede: o transporte falso devolve
 respostas no formato OpenAI e os testes provam o contrato do
 adaptador — diff SEARCH/REPLACE aplicado, reescrita cercada como
-fallback, enforce do EVOLVE-BLOCK, fallback Gemini->Groq em erro,
-lixo virando MutationError limpa e o prompt carregando o feedback.
+fallback, enforce do EVOLVE-BLOCK, cadeia NVIDIA->Gemini->Groq,
+retry com backoff do transporte em 429, lixo virando MutationError
+limpa e o prompt carregando o feedback.
 """
 from __future__ import annotations
 
@@ -52,27 +53,31 @@ def _diff_response(summary: str = "open a second mine slot earlier") -> str:
 class MockTransport:
     """Roteia por provedor (URL) e registra as chamadas."""
 
-    def __init__(self, gemini=None, groq=None):
+    def __init__(self, gemini=None, groq=None, nvidia=None):
         self.gemini = gemini or (200, _body(_diff_response()))
         self.groq = groq or (200, _body(_diff_response("via groq")))
+        self.nvidia = nvidia or (200, _body(_diff_response("via nvidia")))
         self.calls: list[tuple[str, dict]] = []
 
     def __call__(self, url, headers, payload, timeout):
         self.calls.append((url, payload))
         if "generativelanguage" in url:
             return self.gemini
+        if "integrate.api.nvidia.com" in url:
+            return self.nvidia
         return self.groq
 
 
-def _mutator(llm, transport, gemini="k-gem", groq="k-groq"):
-    return llm.LLMMutator(keys={"gemini": gemini, "groq": groq},
+def _mutator(llm, transport, gemini="k-gem", groq="k-groq", nvidia=None):
+    return llm.LLMMutator(keys={"nvidia": nvidia, "gemini": gemini,
+                                "groq": groq},
                           transport=transport)
 
 
 # ------------------------------------------------------------------ #
 def test_diff_applied_and_guard_clean(llm):
     mut = _mutator(llm, MockTransport())
-    # Random(0): 1º draw 0,844 -> modelo de volume (flash-lite)
+    # Random(0): 1º draw 0,844 -> modelo de volume do Gemini
     child, desc = mut.mutate(SEED, random.Random(0),
                              {"parent_hash": "abc",
                               "parent_metrics": {"S1": 0.5, "S2": 0.49}})
@@ -134,10 +139,12 @@ def test_gemini_429_falls_back_to_groq(llm):
 
 
 def test_no_keys_raises(llm, monkeypatch):
+    monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     with pytest.raises(llm.NoKeysError):
-        llm.LLMMutator(keys={"gemini": None, "groq": None})
+        llm.LLMMutator(keys={"nvidia": None, "gemini": None,
+                             "groq": None})
 
 
 def test_prompt_carries_feedback(llm):
@@ -175,3 +182,79 @@ def test_groq_only_route(llm):
     child, desc = mut.mutate(SEED, random.Random(1), None)
     assert desc.startswith("llm[groq/")
     assert all("groq" in u for u, _ in transport.calls)
+
+
+def test_nvidia_only_route(llm):
+    transport = MockTransport()
+    mut = _mutator(llm, transport, gemini=None, groq=None,
+                   nvidia="k-nvidia")
+    child, desc = mut.mutate(SEED, random.Random(1), None)
+    assert REPLACE_LINE in child
+    assert desc.startswith(
+        "llm[nvidia/qwen/qwen3-coder-480b-a35b-instruct]")
+    assert all("integrate.api.nvidia.com" in u
+               for u, _ in transport.calls)
+    assert mut.stats["calls"] == {
+        "nvidia/qwen/qwen3-coder-480b-a35b-instruct": 1}
+
+
+def test_nvidia_first_then_gemini(llm):
+    # NVIDIA abre a cadeia: em 429 dela, a mutação cai para o Gemini.
+    transport = MockTransport(nvidia=(429, "rate limited"))
+    mut = _mutator(llm, transport, nvidia="k-nvidia")
+    child, desc = mut.mutate(SEED, random.Random(1), None)
+    assert REPLACE_LINE in child
+    assert desc.startswith("llm[gemini/")
+    first_url = transport.calls[0][0]
+    assert "integrate.api.nvidia.com" in first_url
+    assert mut.stats["fallbacks"] >= 1
+
+
+def test_load_api_keys_sees_nvidia(llm, monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "k-nvidia")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    keys = llm.load_api_keys()
+    assert keys["nvidia"] == "k-nvidia"
+    assert keys["gemini"] is None
+    assert keys["groq"] is None
+
+
+def test_transport_retries_429_with_backoff_until_success(
+        llm, monkeypatch):
+    respostas = [(429, "rate limited"), (429, "rate limited"),
+                 (200, "ok")]
+    tentativas: list[str] = []
+    dormidas: list[float] = []
+
+    def fake_attempt(url, headers, payload, timeout):
+        tentativas.append(url)
+        return respostas[len(tentativas) - 1]
+
+    monkeypatch.setattr(llm, "_single_attempt", fake_attempt)
+    monkeypatch.setattr(llm, "RETRY_BACKOFFS", (0.5, 2.0))
+    monkeypatch.setattr(llm.time, "sleep", dormidas.append)
+    monkeypatch.setenv("FORGE_LLM_MIN_INTERVAL_S", "0")
+    status, body = llm._default_transport(
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        {}, {}, 10)
+    assert (status, body) == (200, "ok")
+    assert len(tentativas) == 3            # 1 + len(RETRY_BACKOFFS)
+    assert dormidas == [0.5, 2.0]          # backoff entre tentativas
+
+
+def test_transport_retries_exhausted_returns_last_status(
+        llm, monkeypatch):
+    tentativas = 0
+
+    def fake_attempt(url, headers, payload, timeout):
+        nonlocal tentativas
+        tentativas += 1
+        return 503, "indisponível"
+
+    monkeypatch.setattr(llm, "_single_attempt", fake_attempt)
+    monkeypatch.setattr(llm, "RETRY_BACKOFFS", (0.0, 0.0))
+    monkeypatch.setenv("FORGE_LLM_MIN_INTERVAL_S", "0")
+    status, body = llm._default_transport("https://x", {}, {}, 10)
+    assert (status, body) == (503, "indisponível")
+    assert tentativas == 3

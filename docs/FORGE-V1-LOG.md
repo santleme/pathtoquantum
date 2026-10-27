@@ -161,3 +161,42 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   por infraestrutura de cota, não por modelo. Próximo passo
   proposto: portar ritmo + retry/backoff do transporte local para o
   mutador do Kaggle e relançar (decisão do fundador).
+
+## Emenda pré-lançamento — NVIDIA principal + ritmo/backoff (27/10/2026)
+
+- **Motivo**: a V7 morreu por HTTP 429 nas quatro rotas (rajada de
+  ~1.200 chamadas em ~3,5 min, sem ritmo nem backoff). Pesquisa de
+  provedores gratuitos (3 frentes, fontes oficiais): Cerebras virou
+  trial com cartão (reprovada), OpenRouter free é 50 req/dia,
+  GitHub Models foi aposentado — **NVIDIA NIM** é a rota nova:
+  chave gratuita `nvapi-…` (build.nvidia.com, sem cartão), endpoint
+  OpenAI-compatible, modelo coder 480B.
+- **O que mudou** (branch `forja/forge-v1-modelos-kaggle`):
+  - `forge/llm_mutator.py`: provedor `nvidia` (base
+    `https://integrate.api.nvidia.com/v1`, modelo de volume
+    `qwen/qwen3-coder-480b-a35b-instruct`) na **frente da cadeia**:
+    NVIDIA → par Gemini (volume/salto, pesos inalterados) → par
+    Groq. `load_api_keys` enxerga `NVIDIA_API_KEY` no mesmo padrão
+    dos demais (env + UserSecretsClient); o ensemble roda com
+    qualquer subconjunto de chaves e `NoKeysError` só dispara sem
+    nenhuma. Transporte default com **ritmo + retry**: intervalo
+    mínimo entre tentativas (default 1,5s, env
+    `FORGE_LLM_MIN_INTERVAL_S`) e até 3 tentativas com backoff
+    5s→20s em HTTP 429/500/502/503/504 e erros de rede — política
+    portada do transporte local provado do Plano B
+    (`forge/local_transport.py`).
+  - `forge/config.yaml`: espelha o provedor/modelo principal
+    (`main_provider`/`main_model`/`main_api_base`), demais intactos.
+  - `notebooks/forge-v1.ipynb` (só a célula-sonda): sonda também
+    `NVIDIA_API_KEY` e o bloqueio pré-registrado passa a ser "sem
+    NENHUMA das três chaves" — nenhuma chave individual é exigida.
+    `forge/run.py` não mudou: ele já consome `LLMMutator()`/
+    `NoKeysError`, sem referência a provedor.
+  - Testes: suíte da forja **64/64** (59 + 5 novos: rota só-NVIDIA,
+    NVIDIA primeiro na cadeia, `load_api_keys` com NVIDIA, retry
+    com backoff em 429 até sucesso e retry esgotado devolvendo o
+    último status).
+- **Protocolo da corrida inalterado**: 300 iterações, 5 ilhas,
+  cascata, avaliação cega nas seeds 9901–9932 e a mesma régua de
+  veredito. Relançamento = bundle novo + nova versão do kernel,
+  pendente só do cadastro do secret `NVIDIA_API_KEY`.

@@ -14,9 +14,16 @@ enforce_evolve_blocks: true
 # Secundário = 2.5 Pro desde a pesquisa do mutador (27/10/2026,
 # docs/PESQUISA-MUTADOR-FORGE-V1.md §4): o salto tem que ser salto.
 # O driver da casa (forge/run.py + forge/llm_mutator.py) usa estes
-# mesmos modelos/pesos, com a Groq como fallback (decisão do
-# fundador: ele tem as duas chaves).
+# mesmos modelos/pesos. Cadeia de rotas (emenda de provedor de
+# 27/10/2026, pós-429 da Version 7): NVIDIA NIM na frente, depois o
+# par Gemini, depois o par Groq como fallback final — o ensemble
+# roda com qualquer subconjunto das três chaves. O transporte tem
+# ritmo (FORGE_LLM_MIN_INTERVAL_S, default 1,5s) + retry com
+# backoff 5s/20s em 429/5xx.
 llm:
+  main_provider: "nvidia"
+  main_model: "qwen/qwen3-coder-480b-a35b-instruct"
+  main_api_base: "https://integrate.api.nvidia.com/v1"
   primary_model: "gemini-3-flash-preview"
   primary_model_weight: 0.8
   secondary_model: "gemini-3.5-flash"

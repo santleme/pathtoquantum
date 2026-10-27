@@ -8,27 +8,33 @@ MESMA interface do mutador programático do smoke —
 
 — mas quem muta é um ensemble de LLMs via endpoints OpenAI-compatible:
 
-- **Gemini (primária)**, no desenho da config validado pela pesquisa
+- **NVIDIA NIM (principal)**, pela EMENDA DE PROVEDOR de 27/10/2026:
+  a Version 7 morreu por HTTP 429 nas quatro rotas antigas (rajada
+  sem ritmo nem backoff; ver docs/FORGE-V1-LOG.md). A NVIDIA entra
+  na frente da cadeia com ``qwen/qwen3-coder-480b-a35b-instruct``
+  no volume (chave gratuita `nvapi-…` de build.nvidia.com, limite
+  ~40 RPM — daí o ritmo/backoff no transporte, ver abaixo);
+- **Gemini**, no desenho da config validado pela pesquisa
   (docs/PESQUISA-MUTADOR-FORGE-V1.md §4), com a EMENDA DE MODELOS de
   27/10/2026: a família Gemini 2.5 retorna 404 para a chave do
   fundador (a Version 6 do kernel morreu assim: 300/300 mutações
   `rejected_llm`), então o volume (peso 0,8) é
   ``gemini-3-flash-preview`` e os saltos (peso 0,2) são
   ``gemini-3.5-flash`` — ambos com sonda HTTP 200 verificada;
-- **Groq (fallback)**: se a chamada Gemini falhar (rate limit 429,
-  5xx, timeout, resposta vazia/inutilizável), a mutação cai para os
-  modelos coder da Groq — ``openai/gpt-oss-120b`` e, persistindo a
+- **Groq (fallback final)**: persistindo a falha, a mutação cai para
+  os modelos coder da Groq — ``openai/gpt-oss-120b`` e, persistindo a
   falha, ``qwen/qwen3.8-27b`` (a Groq não serve mais o qwen3-32b).
 
-Sem nenhuma chave, o ensemble é o que houver: só Groq vira rota
-única; só Gemini dispensa o fallback. Sem chave nenhuma,
-``NoKeysError`` — quem chama (o notebook) transforma isso no
-veredito BLOQUEADO, não em crash.
+O ensemble é o que houver: qualquer subconjunto de chaves funciona
+(só NVIDIA vira rota única; sem NVIDIA a cadeia começa no Gemini).
+Sem chave nenhuma, ``NoKeysError`` — quem chama (o notebook)
+transforma isso no veredito BLOQUEADO, não em crash.
 
-CHAVES: lidas de variáveis de ambiente (``GEMINI_API_KEY`` /
-``GROQ_API_KEY``) ou, no Kaggle, do UserSecretsClient — ver
-``load_api_keys``. NUNCA são impressas, logadas ou embutidas em
-código/notebook; os testes usam transporte MOCKADO, sem chave real.
+CHAVES: lidas de variáveis de ambiente (``NVIDIA_API_KEY`` /
+``GEMINI_API_KEY`` / ``GROQ_API_KEY``) ou, no Kaggle, do
+UserSecretsClient — ver ``load_api_keys``. NUNCA são impressas,
+logadas ou embutidas em código/notebook; os testes usam transporte
+MOCKADO, sem chave real.
 
 Formato da mutação (o do OpenEvolve): blocos SEARCH/REPLACE sobre o
 fonte do pai, restritos ao EVOLVE-BLOCK — ``enforce_evolve_blocks``
@@ -40,19 +46,23 @@ como reescrita (e passa pelo mesmo enforce); qualquer outra coisa é
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import random
 import re
+import time
 import urllib.error
 import urllib.request
 
 # --------------------------------------------------------------------- #
 # Rotas e modelos (espelham forge/config.yaml + a pesquisa do mutador)
 # --------------------------------------------------------------------- #
+NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
+NVIDIA_VOLUME_MODEL = "qwen/qwen3-coder-480b-a35b-instruct"   # rota principal (emenda 27/10, pós-429 da V7)
 GEMINI_VOLUME_MODEL = "gemini-3-flash-preview"   # peso 0,8 — volume (emenda 27/10: 2.5-flash-lite dá 404 p/ esta chave)
 GEMINI_LEAP_MODEL = "gemini-3.5-flash"            # peso 0,2 — saltos (emenda 27/10: 2.5-pro idem; 3.1-pro-preview 429 na cota)
 GEMINI_LEAP_WEIGHT = 0.2
@@ -101,23 +111,30 @@ class MutationError(RuntimeError):
 
 
 class NoKeysError(RuntimeError):
-    """Nenhuma chave de LLM disponível (Gemini nem Groq)."""
+    """Nenhuma chave de LLM disponível (NVIDIA, Gemini nem Groq)."""
 
 
 # --------------------------------------------------------------------- #
 # Chaves — env ou Kaggle Secrets; valores NUNCA aparecem em saída
 # --------------------------------------------------------------------- #
+# (nome interno, variável/secret) — UM padrão só para os três
+# provedores: env primeiro, UserSecretsClient do Kaggle no que faltar.
+_KEY_LABELS = (("nvidia", "NVIDIA_API_KEY"),
+               ("gemini", "GEMINI_API_KEY"),
+               ("groq", "GROQ_API_KEY"))
+
+
 def load_api_keys() -> dict:
-    """{'gemini': str|None, 'groq': str|None} sem vazar valor algum."""
-    keys = {"gemini": os.environ.get("GEMINI_API_KEY") or None,
-            "groq": os.environ.get("GROQ_API_KEY") or None}
-    if keys["gemini"] and keys["groq"]:
+    """{'nvidia': str|None, 'gemini': str|None, 'groq': str|None}
+    sem vazar valor algum."""
+    keys = {name: os.environ.get(label) or None
+            for name, label in _KEY_LABELS}
+    if all(keys.values()):
         return keys
     try:  # no Kaggle: UserSecretsClient (fora dele, o import falha)
         from kaggle_secrets import UserSecretsClient
         client = UserSecretsClient()
-        for name, label in (("gemini", "GEMINI_API_KEY"),
-                            ("groq", "GROQ_API_KEY")):
+        for name, label in _KEY_LABELS:
             if not keys[name]:
                 try:
                     keys[name] = client.get_secret(label) or None
@@ -136,9 +153,44 @@ _USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
 
-def _default_transport(url: str, headers: dict, payload: dict,
-                       timeout: int):
-    """POST JSON via urllib. Devolve (status, corpo_texto)."""
+# Retry com backoff (emenda 27/10/2026, pós-429 da Version 7):
+# status transitórios valem outra tentativa — política portada do
+# transporte local provado (forge/local_transport.py do Plano B:
+# 3 tentativas, backoff 5s/20s). Constantes de módulo para os
+# testes poderem zerar os intervalos.
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+RETRY_BACKOFFS = (5.0, 20.0)
+
+# Ritmo (pacing): intervalo mínimo entre tentativas HTTP, para a
+# rajada do driver não estrangular os free tiers (~40 RPM na
+# NVIDIA, janelas curtas nos demais). Ajustável por ambiente.
+DEFAULT_MIN_INTERVAL_S = 1.5
+_MIN_INTERVAL_ENV = "FORGE_LLM_MIN_INTERVAL_S"
+_last_attempt_at = 0.0
+
+
+def _min_interval_s() -> float:
+    try:
+        return max(0.0, float(os.environ.get(
+            _MIN_INTERVAL_ENV, DEFAULT_MIN_INTERVAL_S)))
+    except ValueError:
+        return DEFAULT_MIN_INTERVAL_S
+
+
+def _pace() -> None:
+    """Espera até o intervalo mínimo desde a última tentativa."""
+    global _last_attempt_at
+    now = time.monotonic()
+    wait = _last_attempt_at + _min_interval_s() - now
+    if wait > 0:
+        time.sleep(wait)
+        now = time.monotonic()
+    _last_attempt_at = now
+
+
+def _single_attempt(url: str, headers: dict, payload: dict,
+                    timeout: int):
+    """Uma tentativa de POST JSON via urllib -> (status, corpo)."""
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json",
@@ -150,14 +202,50 @@ def _default_transport(url: str, headers: dict, payload: dict,
         return exc.code, exc.read().decode("utf-8", "replace")
 
 
+def _default_transport(url: str, headers: dict, payload: dict,
+                       timeout: int):
+    """POST JSON com ritmo + retry. Devolve (status, corpo_texto).
+
+    Até len(RETRY_BACKOFFS)+1 tentativas para status em
+    ``RETRYABLE_STATUS`` e para erros de rede; esgotado em HTTP,
+    devolve o último (status, corpo); esgotado em rede, devolve
+    (503, "network error after retries: ...") — assim a cadeia de
+    fallback do mutador trata a falha como falha da rota, igual ao
+    transporte local provado. Cada tentativa respeita o pacing de
+    ``_pace()``.
+    """
+    attempts = len(RETRY_BACKOFFS) + 1
+    for attempt in range(attempts):
+        last = attempt == attempts - 1
+        _pace()
+        try:
+            status, body = _single_attempt(url, headers, payload,
+                                           timeout)
+        except (urllib.error.URLError, OSError,
+                http.client.RemoteDisconnected) as exc:
+            if not last:
+                time.sleep(RETRY_BACKOFFS[attempt])
+                continue
+            return 503, f"network error after retries: {exc}"
+        if status in RETRYABLE_STATUS and not last:
+            time.sleep(RETRY_BACKOFFS[attempt])
+            continue
+        return status, body
+    raise AssertionError("inalcançável: o laço sempre devolve")
+
+
+_PROVIDER_BASES = {"nvidia": NVIDIA_API_BASE,
+                   "gemini": GEMINI_API_BASE,
+                   "groq": GROQ_API_BASE}
+
+
 class LLMClient:
     """Chat completions mínimo, um provedor por instância."""
 
     def __init__(self, provider: str, api_key: str, transport=None):
         self.provider = provider
         self._api_key = api_key
-        self.base = GEMINI_API_BASE if provider == "gemini" \
-            else GROQ_API_BASE
+        self.base = _PROVIDER_BASES[provider]
         self.transport = transport or _default_transport
 
     def chat(self, model: str, messages: list[dict]) -> str:
@@ -274,9 +362,10 @@ def build_user_prompt(parent_source: str, feedback: dict | None) -> str:
 # O mutador
 # --------------------------------------------------------------------- #
 class LLMMutator:
-    """Ensemble Gemini (volume/salto) com fallback Groq.
+    """Ensemble: NVIDIA (volume) -> par Gemini -> par Groq.
 
-    ``keys``: {'gemini': ..., 'groq': ...} (None = provedor fora).
+    ``keys``: {'nvidia': ..., 'gemini': ..., 'groq': ...}
+    (None/ausente = provedor fora da cadeia).
     ``transport``: injetável — os testes passam um mock que devolve
     respostas fixas no formato OpenAI, sem chave nem rede.
     """
@@ -284,19 +373,22 @@ class LLMMutator:
     def __init__(self, keys: dict | None = None, transport=None):
         keys = keys if keys is not None else load_api_keys()
         self.clients: dict[str, LLMClient] = {}
-        for provider in ("gemini", "groq"):
+        for provider in ("nvidia", "gemini", "groq"):
             if keys.get(provider):
                 self.clients[provider] = LLMClient(
                     provider, keys[provider], transport=transport)
         if not self.clients:
             raise NoKeysError(
-                "nenhuma chave de LLM (GEMINI_API_KEY/GROQ_API_KEY) "
-                "disponível — cadastre os Secrets no Kaggle")
+                "nenhuma chave de LLM (NVIDIA_API_KEY/GEMINI_API_KEY/"
+                "GROQ_API_KEY) disponível — cadastre os Secrets no "
+                "Kaggle")
         self.stats = {"calls": {}, "fallbacks": 0, "failures": 0}
 
     # -- cadeia de rotas de uma iteração ------------------------------ #
     def _route_chain(self, rng: random.Random) -> list[tuple[str, str]]:
         chain: list[tuple[str, str]] = []
+        if "nvidia" in self.clients:
+            chain += [("nvidia", NVIDIA_VOLUME_MODEL)]
         if "gemini" in self.clients:
             leap = rng.random() < GEMINI_LEAP_WEIGHT
             primary = GEMINI_LEAP_MODEL if leap else GEMINI_VOLUME_MODEL
