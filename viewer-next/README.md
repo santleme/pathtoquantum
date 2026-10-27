@@ -24,9 +24,18 @@ python3 -m http.server -d dist 8000
 
 | Métrica | Teto | Medido | Veredito |
 |---|---|---|---|
-| Bundle do app (JS+CSS+HTML, gzip, sem geo/dados) | ≤ 180 KB | **13,3 KB** (JS 12,3 KB gzip) | PASSA |
-| Geografia embutida | ≤ 200 KB | **114,1 KB bruto / 40,0 KB gzip** (mundo land-110m 55,2 KB + excerto SA-50m 61,6 KB) | PASSA |
+| Bundle do app (JS+CSS+HTML, gzip, sem geo/dados) | ≤ 180 KiB | **13,3 KiB** (JS 12,0 KiB gzip + HTML 1,3 KiB gzip) | PASSA |
+| Geografia embutida no `dist` | ≤ 200 KiB | **114,1 KiB bruto / 40,0 KiB gzip** (mundo land-110m 53,9 KiB + excerto SA-50m 60,2 KiB) | PASSA |
 | Frame dinâmico — benchmark sintético 500 empresas / 2.000 partículas | < 8 ms | **dinâmico 1,59 ms · fluxo 0,12 ms · total 2,28 ms/frame (~440 fps-equiv)** | PASSA |
+
+Unidade única desta tabela: **KiB** (bytes ÷ 1024), a mesma que o `measure` calcula
+e usa nos tetos — conferido com `npm run build && npm run measure` nesta revisão
+(app gzip 13.617 B; geografia 116.809 B bruto / 40.972 B gzip; componentes somam:
+53,9 + 60,2 = 114,1 KiB).
+
+Nota sobre a geografia: o `geo/world-110m.json` (land-110m) é **gerado/copiado para o
+`dist` no build e entra na conta acima, mas não é carregado na abertura** — a abertura
+busca só o `geo/sa-50m.json`. A vista-múndi que usará o land-110m é fatia futura.
 
 Reproduzir: `npm run build && npm run measure && npm run bench`.
 
@@ -40,5 +49,11 @@ Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orien
 
 Crônica por `kind` com hierarquia e destaque de novo (F2) · lentes + placar-ranking
 completo (F3) · barra da cadeia/Sankey (F4) · README/lockup/favicon do repo (F5) ·
-acessibilidade/responsivo/screenshots (F6). Comparador `?compare=` e painel `?forge=`
-seguem no viewer legado nesta fatia (não-regressão deles é da F6).
+acessibilidade/responsivo/screenshots (F6).
+
+**VIS-07 em F0/F1 — cumprimento via viewer legado:** o seletor de arquivo avulso, o
+`?compare=`, o `?forge=` e o clique na crônica para saltar ao marco se cumprem pelo
+viewer legado (`../viewer/`), que segue **intocado** nesta fatia. Este app novo cobre,
+ele próprio, play/pause, as velocidades, o scrub e o `?run=`, e expõe
+`window.ptqJumpToTick` para o salto por tick. A fiação completa desses comportamentos
+no app novo é fatia futura (F6) — este README não promete o que ainda não foi ligado aqui.
