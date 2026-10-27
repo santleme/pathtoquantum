@@ -1,7 +1,9 @@
-// Âncoras da SPEC-VISUAL-WOW §8.2 para as fatias F2 (VIS-03/04) e F3 (VIS-08):
-// lê os JSONs servidos e confere contagem de kinds, os 119 itens narrativos do
-// frame final, o lote de novos do avanço 0→12 e a ordem/caixa/elos do placar
-// final contra scoreboard.json. Sai com código != 0 se alguma âncora divergir.
+// Âncoras da SPEC-VISUAL-WOW §8.2 para as fatias F2 (VIS-03/04), F3 (VIS-08) e
+// F4 (VIS-06): lê os JSONs servidos e confere contagem de kinds, os 119 itens
+// narrativos do frame final, o lote de novos do avanço 0→12, a ordem/caixa/elos
+// do placar final contra scoreboard.json e os primeiros por elo da cadeia
+// (chain_link), o progresso final por empresa e o contexto de mercado. Sai com
+// código != 0 se alguma âncora divergir.
 // Uso: node scripts/check-anchors.mjs
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -52,9 +54,43 @@ const anchorsF3 = [
   ['Δ PetroPlata negativo', ranked.find((c) => c.name === 'PetroPlata').cash - prevCash.get(ranked.find((c) => c.name === 'PetroPlata').id) < 0, true],
 ];
 
+// --- Âncoras F4 (VIS-06): barra/vista da cadeia ---
+// Derivação independente da do viewer: o elo de cada chain_link sai do texto
+// do evento (o motor nomeia o elo dominado); "primeiro" = menor tick por elo.
+const STAGE_NAMES = ['extração', 'refino', 'componentes', 'dispositivos', 'supercomputador'];
+const firstsByStage = (upToTick) => {
+  const out = [null, null, null, null, null];
+  for (const e of ch) {
+    if (e.kind !== 'chain_link' || e.tick > upToTick) continue;
+    const idx = STAGE_NAMES.findIndex((n) => (e.text ?? '').toLowerCase().includes(n));
+    if (idx < 0) continue;
+    if (!out[idx] || e.tick < out[idx].tick) out[idx] = { company: e.company, tick: e.tick };
+  }
+  return out;
+};
+const f120 = firstsByStage(120);
+const f0 = firstsByStage(0);
+const stageByName = Object.fromEntries(finalFrame.companies.map((c) => [c.name, c.stage]));
+const orbita = finalFrame.companies.find((c) => c.name === 'Órbita Systems');
+const anchorsF4 = [
+  ['cadeia tick 120: elos 1–4 dominados pela Órbita (ticks 1,2,5,8)',
+    JSON.stringify(f120.slice(0, 4)),
+    JSON.stringify([1, 2, 5, 8].map((tick) => ({ company: 'Órbita Systems', tick })))],
+  ['cadeia tick 120: elo 5 (SUPERCOMPUTADOR) aberto', f120[4], null],
+  ['cadeia tick 0: nenhum elo dominado', JSON.stringify(f0), JSON.stringify([null, null, null, null, null])],
+  ['progresso final (stage/5): Vetor/Cuprum/Nexo/Órbita = 4', [stageByName['Vetor Sul'], stageByName['Cuprum Andes'], stageByName['Nexo Indústrias'], stageByName['Órbita Systems']].join(','), '4,4,4,4'],
+  ['progresso final (stage/5): Ferra/PetroPlata = 2', [stageByName['Ferra Brasil'], stageByName['PetroPlata']].join(','), '2,2'],
+  ['progresso final (stage/5): Lítio Austral/Andina Prime = 0', [stageByName['Lítio Austral'], stageByName['Andina Prime']].join(','), '0,0'],
+  ['mercado tick 120: preço do supercomputador (constante, como está)', finalFrame.prices.supercomputer, 1200000],
+  ['mercado tick 120: preço do device (constante, como está)', finalFrame.prices.device, 9500],
+  ['stocks Órbita: component > 0 com stage 4', orbita.stocks.component > 0 && orbita.stage === 4, true],
+  ['stocks: empresas sem stocks = objeto vazio, não erro',
+    ['Lítio Austral', 'Andina Prime'].every((n) => Object.keys(finalFrame.companies.find((c) => c.name === n).stocks ?? {}).length === 0), true],
+];
+
 let fail = 0;
 console.log('kind counts:', JSON.stringify(counts));
-for (const [name, got, want] of [...anchors, ...anchorsF3]) {
+for (const [name, got, want] of [...anchors, ...anchorsF3, ...anchorsF4]) {
   const ok = got === want;
   if (!ok) fail++;
   console.log(`${ok ? 'OK ' : 'FAIL'} ${name}: ${got} (esperado ${want})`);
@@ -63,4 +99,4 @@ if (fail) {
   console.error(`\n${fail} âncora(s) divergem — defeito da fatia, não do script (SPEC §8.2).`);
   process.exit(1);
 }
-console.log('\nTodas as âncoras F2+F3 conferem.');
+console.log('\nTodas as âncoras F2+F3+F4 conferem.');
