@@ -73,6 +73,12 @@ class StockBook(MutableMapping):
         """Cópia do array na ordem de ``chain.COMMODITIES``."""
         return list(self._arr)
 
+    def add_into(self, totals: list[float]) -> None:
+        """Acumula este livro num vetor de totais (mesma ordem SoA)."""
+        arr = self._arr
+        for i in range(len(arr)):
+            totals[i] += arr[i]
+
 PALETTE = ["#e63946", "#f4a261", "#2a9d8f", "#457b9d",
            "#9b5de5", "#f15bb5", "#00bbf9", "#8ac926"]
 ARCHETYPES = [

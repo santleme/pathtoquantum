@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import random
 
 from dataclasses import asdict
 
-from . import chain
+from . import chain, marketdata
 from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, StockBook, make_companies
 from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
@@ -23,6 +24,8 @@ from .world import CITIES, DEPOSITS, City, Deposit
 
 START_YEAR = 2027
 _COMMODITIES_SORTED = sorted(chain.COMMODITIES)
+_REGIME_DUR_KEY = {"boom": "boom_months", "bust": "bust_months",
+                   "normal": "normal_months"}
 
 
 class Policy:
@@ -344,7 +347,9 @@ class Engine:
     def __init__(self, seed: int = 42, n_companies: int = 8,
                  god_events: list[dict] | None = None,
                  policy: Policy | None = None,
-                 world_data: bool = True):
+                 world_data: bool = True,
+                 market_v2: bool = False,
+                 market_params: dict | None = None):
         self.policy = policy if policy is not None else HeuristicPolicy()
         self.rng = random.Random(seed)
         self.seed = seed
@@ -360,6 +365,25 @@ class Engine:
         self.companies: list[Company] = make_companies(
             n_companies, self.rng, cities=self.cities)
         self.prices = dict(chain.BASE_PRICES)
+        # Mercado vivo B1 (Degrau 1, Fase 2) — desligado por padrão.
+        # Desligado, NADA deste bloco é tocado nem serializado e o
+        # comportamento é bit-idêntico ao clássico (goldens da Fase 1).
+        # Ligado, os parâmetros são DADO (mundo.marketdata) e a âncora
+        # p* vira série pública (o acoplamento que o B3 vai consumir).
+        self.market_v2 = market_v2
+        self.anchors = dict(chain.BASE_PRICES)
+        self._mkt: dict | None = None
+        self._regime: dict[str, str] = {}
+        self._regime_months: dict[str, int] = {}
+        self._demand_ema: dict[str, float] = {}
+        self._cover: dict[str, float] = {}
+        self._fair_noise: dict[str, float] = {}
+        self._price_ring: dict[str, list[float]] = {}
+        self._record_state: dict[str, dict] = {}
+        self._tick_stock_totals: list[float] | None = None
+        self._tick_seasonal: dict[str, float] | None = None
+        if market_v2:
+            self._init_living_market(market_params)
         self.demand_factors: dict[str, tuple[float, int]] = {}
         self.god_events = sorted(god_events or [], key=lambda e: e["tick"])
         self.first_link: dict[int, str] = {}
@@ -625,9 +649,274 @@ class Engine:
                                        f"{comp.name} entrega um SUPERCOMPUTADOR "
                                        f"montado por conta própria.", comp.name)
 
+    # -- mercado vivo (B1) ------------------------------------------------------
+    def _init_living_market(self, params_override: dict | None) -> None:
+        self._mkt = marketdata.resolve_params(params_override)
+        for c in chain.COMMODITIES:
+            self._regime[c] = "normal"
+            self._regime_months[c] = 0
+            self._demand_ema[c] = max(float(chain.CITY_DEMAND.get(c, 0.0)), 10.0)
+            self._cover[c] = 0.0
+            self._fair_noise[c] = 0.0
+            self._price_ring[c] = []
+            self._record_state[c] = {"dir": None, "extreme": 0.0}
+
+    def inventory_cover(self, commodity: str) -> float:
+        """Cobertura de inventário PÚBLICA (estilo estoque de bolsa/LME):
+        meses de demanda cobertos pelo estoque AGREGADO do mundo. É o
+        único sinal de inventário que sai — estoques por empresa
+        continuam privados (fog-of-war intacto)."""
+        return self._cover.get(commodity, 0.0)
+
+    def _advance_market(self) -> None:
+        """Um mês de dinâmica por commodity: regime Markov com durações
+        médias reais, deriva da âncora conforme o regime e o ruído do
+        preço justo. Consome RNG sempre na mesma ordem (commodities
+        ordenadas); desligado, não consome nada. O regime NÃO é
+        observável pelas empresas — infere-se do preço, como na vida
+        real. Só a âncora p* é série pública (preparo do acoplamento B3).
+        """
+        comms = self._mkt["commodities"]
+        rnd, gauss = self.rng.random, self.rng.gauss
+        regimes, months, anchors = self._regime, self._regime_months, \
+            self.anchors
+        for c in _COMMODITIES_SORTED:
+            p = comms[c]
+            regime = regimes[c]
+            months[c] += 1
+            if rnd() < 1.0 / p[_REGIME_DUR_KEY[regime]]:
+                if regime == "normal":
+                    new = "boom" if rnd() < 0.5 else "bust"
+                else:
+                    new = "normal"
+                regimes[c] = new
+                months[c] = 0
+                regime = new
+                if new in ("boom", "bust"):
+                    self._narrate_regime(c, new)
+            if regime == "boom":
+                anchors[c] *= 1.0 + p["drift_boom"]
+            elif regime == "bust":
+                anchors[c] *= 1.0 - p["drift_bust"]
+            else:   # normal: reversão lenta ao custo de longo prazo
+                base = chain.BASE_PRICES[c]
+                anchors[c] += (base - anchors[c]) * 0.01
+            self._fair_noise[c] = gauss(0.0, p["sigma_monthly"])
+
+    def _narrate_regime(self, commodity: str, new: str) -> None:
+        cover = self._cover.get(commodity, 0.0)
+        anchor = self.anchors[commodity]
+        if new == "boom":
+            text = (f"MERCADO: {commodity} entra em EUFORIA (boom) — a "
+                    f"âncora de longo prazo está em US$ {anchor:,.0f} e "
+                    f"subindo; os estoques do mundo cobrem {cover:.1f} "
+                    f"meses de demanda.")
+        else:
+            text = (f"MERCADO: {commodity} entra em COLAPSO (bust) — a "
+                    f"âncora de longo prazo está em US$ {anchor:,.0f} e "
+                    f"caindo; os estoques do mundo cobrem {cover:.1f} "
+                    f"meses de demanda.")
+        self.chronicle.add(self.tick, "market_regime", text, None,
+                           commodity=commodity, regime=new, anchor=anchor,
+                           cover=cover)
+
+    def _market_living(self, commodity: str) -> None:
+        """O mercado de UMA commodity com o B1 ligado.
+
+        O comércio em si (quem compra de quem, ledger, ferramentas) é
+        idêntico ao clássico; o que muda é a FORMAÇÃO DE PREÇO: demanda
+        das cidades elástica, preço justo = âncora × pressão de
+        inventário × ruído, e banda [0,25×; 6×] DA ÂNCORA (a banda
+        antiga, do preço-base fixo, não representava o ciclo real).
+        Sem oferta, o preço continua derivando para o justo — mercado
+        parado não é preço congelado.
+        """
+        p = self._mkt["commodities"][commodity]
+        ci = chain.COMMODITY_INDEX[commodity]
+        price = self.prices[commodity]
+        anchor = self.anchors[commodity]
+        offers, buys = [], []
+        for c in self.companies:
+            if not c.alive:
+                continue
+            q = c._offers.get(commodity, 0.0)
+            if q > 0.001:
+                offers.append((c, q))
+            buys.append((c, c._buys.get(commodity, 0.0)))
+        total_supply = sum(q for _, q in offers)
+        internal_demand = sum(q for _, q in buys)
+        # cobertura pública de inventário: agregado do mundo, nunca por
+        # empresa (é o sinal estilo LME que torna especulação informada).
+        # Os totais são computados UMA vez por tick em _market (estoques
+        # de uma commodity não mudam enquanto outra é negociada).
+        totals = self._tick_stock_totals
+        total_stocks = totals[ci] if totals is not None else \
+            sum(c.stocks.at(ci) for c in self.companies)
+        cover = total_stocks / max(self._demand_ema[commodity], 1.0)
+        self._cover[commodity] = cover
+        # Preço justo e demanda elástica: as fórmulas canônicas são as
+        # funções puras de marketdata (testadas lá); inline aqui por ser
+        # o caminho quente do tick (11 commodities × todo tick).
+        fair = anchor \
+            * math.exp(-p["gamma"] * (cover - p["cover_target"])) \
+            * math.exp(self._fair_noise[commodity])
+        d0 = chain.CITY_DEMAND.get(commodity, 0.0)
+        if d0 > 0:
+            seasonal = self._tick_seasonal[commodity] \
+                if self._tick_seasonal is not None else \
+                marketdata.seasonal_factor(self.tick, p["seasonal_amp"],
+                                           int(p["seasonal_phase"]))
+            city_q = d0 * (price / anchor) ** (-p["elasticity"]) \
+                * seasonal * self._demand_factor(commodity)
+        else:
+            city_q = 0.0
+        if total_supply > 0:
+            # 1) comércio entre empresas (dinheiro interno: soma zero)
+            sold_internal = 0.0
+            offered_left = {c.cid: q for c, q in offers}
+            for buyer, want in sorted(buys, key=lambda x: x[0].cid):
+                if want <= 0:
+                    continue
+                total_left = sum(offered_left.values())
+                if total_left <= 0:
+                    break
+                fill = min(want, total_left)
+                for seller, q in offers:
+                    if seller is buyer or offered_left[seller.cid] <= 0:
+                        continue
+                    share = fill * (offered_left[seller.cid] / total_left)
+                    share = min(share, offered_left[seller.cid],
+                                buyer.cash / price if price > 0 else 0.0)
+                    if share <= 0.0001:
+                        continue
+                    seller.stocks.add(ci, -share)
+                    buyer.stocks.add(ci, share)
+                    seller.cash += share * price
+                    buyer.cash -= share * price
+                    self._flow(seller.cid, "trade_in", share * price)
+                    self._flow(buyer.cid, "trade_out", -share * price)
+                    offered_left[seller.cid] -= share
+                    sold_internal += share
+            # 2) demanda elástica das cidades sobre o que restou
+            left_total = sum(offered_left.values())
+            if city_q > 0 and left_total > 0:
+                weights = {}
+                for seller, _ in offers:
+                    w = offered_left[seller.cid]
+                    if seller.tools.insta_active(self.tick) \
+                            and commodity == "device":
+                        w *= 2.2
+                    if seller.tools.vid_active(self.tick) \
+                            and commodity in ("device", "supercomputer"):
+                        w *= VID_DEMAND_WEIGHT
+                    if seller.tools.zap_active(self.tick):
+                        w *= 1.3
+                    if seller.tools.loja_active(self.tick) \
+                            and commodity == "device":
+                        w *= LOJA_DEMAND_WEIGHT
+                    weights[seller.cid] = w
+                wsum = sum(weights.values())
+                for seller, _ in offers:
+                    if wsum <= 0:
+                        break
+                    qty = min(offered_left[seller.cid],
+                              city_q * weights[seller.cid] / wsum)
+                    if qty <= 0.0001:
+                        continue
+                    seller.stocks.add(ci, -qty)
+                    seller.cash += qty * price
+                    self._flow(seller.cid, "city_sales", qty * price)
+                    self.money_in += qty * price
+                    self.ledger_mass[commodity]["sold_external"] += qty
+                    offered_left[seller.cid] -= qty
+                    if commodity == "device" \
+                            and seller.tools.loja_active(self.tick):
+                        fee = qty * price * LOJA_FEE_PCT
+                        seller.cash -= fee
+                        self.money_out += fee
+                        self._flow(seller.cid, "spend_tools", -fee)
+        # demanda realizada -> EMA pública (a régua da cobertura)
+        demand_total = internal_demand + city_q
+        alpha = self._mkt["model"].get("ema_alpha", 0.1)
+        ema = self._demand_ema[commodity]
+        self._demand_ema[commodity] = ema + alpha * (demand_total - ema)
+        # 3) preço: desequilíbrio + perseguição do justo; banda da âncora
+        ratio = (demand_total - total_supply) \
+            / max(demand_total, total_supply, 1.0)
+        factor = min(1.6, max(0.6, 1.0 + 0.10 * ratio))
+        new_price = price * factor
+        new_price += p["kappa"] * (fair - new_price)
+        lo, hi = self._mkt["model"]["price_band_of_anchor"]
+        new_price = min(hi * anchor, max(lo * anchor, new_price))
+        self.prices[commodity] = new_price
+        # anel público de 24 meses e recordes: só extremos de episódio
+        ring = self._price_ring[commodity]
+        ring.append(new_price)
+        window = int(self._mkt["model"].get("record_window_months", 24))
+        del ring[:-window]
+        if len(ring) >= 12:
+            self._note_price_record(commodity, new_price, ring[:-1])
+
+    def _note_price_record(self, commodity: str, new_price: float,
+                           prev_ring: list[float]) -> None:
+        """Recorde de preço é TRANSIÇÃO, não estado (princípio B0.4):
+        uma derrapada longa quebra o recorde todo mês e isso é ruído.
+        Episódios: o primeiro rompimento da janela de 24 meses narra;
+        os seguintes, na mesma direção, calam até o preço reverter
+        ≥5% do extremo — aí um novo episódio pode nascer."""
+        model = self._mkt["model"]
+        brk = model.get("record_min_break_pct", 0.005)
+        rev = model.get("record_episode_reversal_pct", 0.05)
+        st = self._record_state[commodity]
+        if st["dir"] == "high" and new_price < st["extreme"] * (1.0 - rev):
+            st["dir"] = None
+        elif st["dir"] == "low" and new_price > st["extreme"] * (1.0 + rev):
+            st["dir"] = None
+        if new_price > max(prev_ring) * (1.0 + brk):
+            if st["dir"] == "high":
+                st["extreme"] = max(st["extreme"], new_price)
+                return
+            st["dir"], st["extreme"] = "high", new_price
+            self.chronicle.add(
+                self.tick, "price_record",
+                f"RECORDE DE PREÇO: {commodity} atinge "
+                f"US$ {new_price:,.0f} — o maior valor em "
+                f"{len(prev_ring) + 1} meses.", None,
+                commodity=commodity, price=new_price,
+                direction="high", window=len(prev_ring) + 1)
+        elif new_price < min(prev_ring) * (1.0 - brk):
+            if st["dir"] == "low":
+                st["extreme"] = min(st["extreme"], new_price)
+                return
+            st["dir"], st["extreme"] = "low", new_price
+            self.chronicle.add(
+                self.tick, "price_record",
+                f"RECORDE DE PREÇO: {commodity} desaba a "
+                f"US$ {new_price:,.0f} — o menor valor em "
+                f"{len(prev_ring) + 1} meses.", None,
+                commodity=commodity, price=new_price,
+                direction="low", window=len(prev_ring) + 1)
+        elif st["dir"] == "high":
+            st["extreme"] = max(st["extreme"], new_price)
+        elif st["dir"] == "low":
+            st["extreme"] = min(st["extreme"], new_price)
+
     # -- mercado --------------------------------------------------------------
     def _market(self) -> None:
+        if self.market_v2:
+            totals = [0.0] * chain.N_COMMODITIES
+            for c in self.companies:
+                c.stocks.add_into(totals)
+            self._tick_stock_totals = totals
+            # sazonalidade do tick, uma vez por commodity (não por chamada)
+            self._tick_seasonal = {
+                c: marketdata.seasonal_factor(
+                    self.tick, pp["seasonal_amp"], int(pp["seasonal_phase"]))
+                for c, pp in self._mkt["commodities"].items()}
         for commodity in _COMMODITIES_SORTED:
+            if self.market_v2:
+                self._market_living(commodity)
+                continue
             price = self.prices[commodity]
             ci = chain.COMMODITY_INDEX[commodity]
             # coleta única: ofertas e compras na ordem das empresas vivas
@@ -719,6 +1008,8 @@ class Engine:
             base = chain.BASE_PRICES[commodity]
             self.prices[commodity] = min(base * 3.0,
                                          max(base * 0.3, price * factor))
+        self._tick_stock_totals = None
+        self._tick_seasonal = None
 
     # -- falência / aquisição ---------------------------------------------------
     def _bankruptcy_cause(self, comp: Company) -> tuple[str, str]:
@@ -781,7 +1072,7 @@ class Engine:
 
     # -- frames ------------------------------------------------------------------
     def _snapshot(self) -> None:
-        self.frames.append({
+        frame = {
             "tick": self.tick,
             "date": sim_date(self.tick, START_YEAR),
             "prices": {k: round(v, 2) for k, v in self.prices.items()},
@@ -802,7 +1093,16 @@ class Engine:
                 "remaining_frac": round(self.remaining[d.name] / d.size_t, 4)
                 if d.size_t else 0.0,
             } for d in self.deposits],
-        })
+        }
+        if self.market_v2:
+            # visão de Deus: âncora (pública), regime (só Deus vê — as
+            # empresas inferem do preço) e cobertura pública, por commodity
+            frame["market"] = {
+                c: {"anchor": round(self.anchors[c], 2),
+                    "regime": self._regime[c],
+                    "cover": round(self._cover[c], 3)}
+                for c in chain.COMMODITIES}
+        self.frames.append(frame)
 
     # -- loop principal ------------------------------------------------------------
     def step(self) -> None:
@@ -812,6 +1112,8 @@ class Engine:
         cash_start = {c.cid: c.cash for c in self.companies}
         self._flows = {}
         self._apply_god_events()
+        if self.market_v2:
+            self._advance_market()
         for comp in self.companies:
             self._check_bankruptcy(comp)
             self._decide(comp)
@@ -878,7 +1180,7 @@ class Engine:
         return self.result()
 
     def result(self) -> dict:
-        return {
+        res = {
             "seed": self.seed,
             "ticks": self.tick,
             "frames": self.frames,
@@ -889,6 +1191,14 @@ class Engine:
                 "facilities": len(c.facilities),
             } for c in sorted(self.companies, key=lambda x: -x.cash)],
         }
+        if self.market_v2:
+            # a série pública da âncora p* (o acoplamento que o B3 lê)
+            res["market"] = {
+                "anchors": dict(self.anchors),
+                "cover": dict(self._cover),
+                "regimes": dict(self._regime),
+            }
+        return res
 
     # -- snapshot / restore -------------------------------------------------
     def state_dict(self) -> dict:
@@ -897,7 +1207,7 @@ class Engine:
         Inclui o estado interno do RNG: restaurar e continuar produz
         resultado idêntico ao da corrida contínua (provado em teste).
         """
-        return {
+        state = {
             "version": 1,
             "seed": self.seed,
             "tick": self.tick,
@@ -932,6 +1242,22 @@ class Engine:
             "money_out": self.money_out,
             "total_supercomputers": self.total_supercomputers,
         }
+        if self.market_v2:
+            # bloco presente SÓ com o B1 ligado: desligado, o state_dict
+            # é byte-idêntico ao clássico (goldens da Fase 1)
+            state["market_v2"] = {
+                "params": copy.deepcopy(self._mkt),
+                "anchors": dict(self.anchors),
+                "regime": dict(self._regime),
+                "regime_months": dict(self._regime_months),
+                "demand_ema": dict(self._demand_ema),
+                "cover": dict(self._cover),
+                "fair_noise": dict(self._fair_noise),
+                "price_ring": {c: list(r)
+                               for c, r in self._price_ring.items()},
+                "record_state": copy.deepcopy(self._record_state),
+            }
+        return state
 
     @classmethod
     def from_state(cls, state: dict,
@@ -982,6 +1308,31 @@ class Engine:
         eng.money_out = state["money_out"]
         eng.total_supercomputers = state["total_supercomputers"]
         eng._flows = {}
+        # mercado vivo: states clássicos não têm o bloco -> segue desligado
+        mv = state.get("market_v2")
+        eng.market_v2 = bool(mv)
+        eng.anchors = dict(chain.BASE_PRICES)
+        eng._mkt = None
+        eng._regime, eng._regime_months = {}, {}
+        eng._demand_ema, eng._cover, eng._fair_noise = {}, {}, {}
+        eng._price_ring = {}
+        eng._record_state = {}
+        if mv:
+            eng._mkt = marketdata._validate(copy.deepcopy(mv["params"]))
+            eng.anchors = dict(mv["anchors"])
+            eng._regime = dict(mv["regime"])
+            eng._regime_months = dict(mv["regime_months"])
+            eng._demand_ema = dict(mv["demand_ema"])
+            eng._cover = dict(mv["cover"])
+            eng._fair_noise = dict(mv["fair_noise"])
+            eng._price_ring = {c: list(r)
+                               for c, r in mv["price_ring"].items()}
+            eng._record_state = copy.deepcopy(mv.get("record_state", {}))
+            for c in chain.COMMODITIES:
+                eng._record_state.setdefault(
+                    c, {"dir": None, "extreme": 0.0})
+        eng._tick_stock_totals = None
+        eng._tick_seasonal = None
         return eng
 
     def save_outputs(self, outdir: str) -> None:

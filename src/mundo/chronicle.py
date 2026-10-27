@@ -22,7 +22,9 @@ class Event:
     kind: str            # founding, probe, mine, facility, chain_link, sale,
                          # bankruptcy, acquisition, god, record, tool, end,
                          # rivalry, era_summary (v1 — narrativos: o replay
-                         # os ignora, o dinheiro anda só nos "flows")
+                         # os ignora, o dinheiro anda só nos "flows"),
+                         # market_regime, price_record (B1 — idem: viradas
+                         # de regime e recordes de preço, só transições)
     text: str
     company: str | None = None
     data: dict = field(default_factory=dict)

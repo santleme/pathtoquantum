@@ -28,6 +28,8 @@ class EpisodeSpec:
     ticks: int = 120
     n_companies: int = 8
     world_data: bool = True
+    market_v2: bool = False             # B1 mercado vivo (Fase 2)
+    market_params: dict | None = None   # override de parâmetros do B1
     god_events: tuple | None = None     # tupla de dicts (congelada)
     keep_frames: bool = False           # frames pesam; treino não precisa
 
@@ -36,7 +38,8 @@ def run_episode(spec: EpisodeSpec) -> dict:
     """Roda UM episódio e devolve o resultado compacto (picklável)."""
     eng = Engine(seed=spec.seed, n_companies=spec.n_companies,
                  god_events=list(spec.god_events) if spec.god_events else None,
-                 world_data=spec.world_data)
+                 world_data=spec.world_data, market_v2=spec.market_v2,
+                 market_params=spec.market_params)
     res = eng.run(spec.ticks)
     out = {
         "seed": spec.seed,
