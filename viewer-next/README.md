@@ -1,4 +1,4 @@
-# viewer-next — Path to Quantum (F0+F1)
+# viewer-next — Path to Quantum (F0+F1+F2)
 
 App Vite + TypeScript (sem framework) da camada visual nova. O viewer legado em
 `../viewer/` continua intocado e abrindo corridas antigas. Stack: `docs/adr/ADR-001-stack-visual.md`;
@@ -43,17 +43,39 @@ Ressalva honesta do benchmark: roda em Node com ctx Canvas stub (conta comandos,
 rasteriza) — mede a lógica de frame (projeção + comandos), não o fps de um browser real.
 É o piso comparável/reproduzível; a margem (3,5× abaixo do teto) é a proteção.
 
-Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orientado a dados).
+Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orientado a dados, feed da crônica F2).
 
-## Fora desta fatia (F2–F6 da spec)
+## F2 — A crônica vira show (VIS-03/VIS-04, branch `viewer/wow-v2-fatias`)
 
-Crônica por `kind` com hierarquia e destaque de novo (F2) · lentes + placar-ranking
-completo (F3) · barra da cadeia/Sankey (F4) · README/lockup/favicon do repo (F5) ·
-acessibilidade/responsivo/screenshots (F6).
+- Feed renderizado por `kind`/`company` (`src/feed.ts`): hierarquia da spec —
+  **marco** (`chain_link, end, record, bankruptcy, acquisition`) > **estrutural**
+  (`facility, mine`) > **fundação/sondagem** (`founding, probe`) > **rotina**
+  (`tool, god`) — cada kind com selo SVG próprio e rótulo pt-BR (nada de emoji);
+  marcador da empresa na cor do frame **+ nome em texto** (cor nunca é o único
+  canal); evento sem `company` não ganha cor nenhuma.
+- `flows` fora da narrativa: os 120 eventos contábeis de texto vazio **não viram
+  itens** — no frame final o feed tem exatamente os **119 itens narrativos**, em
+  ordem cronológica (DOM: mais recente no topo). Kind desconhecido (ex.:
+  `rivalry`) cai no estilo genérico de rotina com o texto integral.
+- Destaque de novo (VIS-04): avançar o frame marca o lote que entrou
+  (`prev.tick < e.tick <= frame.tick`) com selo textual "novo" + pulso; a marca
+  migra no avanço seguinte; scrub/jump/clique não marcam nada;
+  `prefers-reduced-motion` = marca estática, sem pulso.
+- Clique num item do feed (ou Enter/Espaço — o item é um `<button>`) salta o
+  replay ao frame do tick do evento — a fiação real do `ptqJumpToTick`, que
+  fecha o VIS-07 parcial apontado na revisão de F0/F1.
+- Âncoras da fatia: `npm run anchors` (script §8.2 — contagem de kinds, 119
+  itens, lote 0→12 = 46, ticks dos `chain_link` 1/2/5/8). Testes: `npm test`
+  (Vitest — classificação/hierarquia, 119 sem flows, lote de novos, kind
+  desconhecido, clique→salto).
 
-**VIS-07 em F0/F1 — cumprimento via viewer legado:** o seletor de arquivo avulso, o
-`?compare=`, o `?forge=` e o clique na crônica para saltar ao marco se cumprem pelo
-viewer legado (`../viewer/`), que segue **intocado** nesta fatia. Este app novo cobre,
-ele próprio, play/pause, as velocidades, o scrub e o `?run=`, e expõe
-`window.ptqJumpToTick` para o salto por tick. A fiação completa desses comportamentos
-no app novo é fatia futura (F6) — este README não promete o que ainda não foi ligado aqui.
+## Fora desta fatia (F3–F6 da spec)
+
+Lentes + placar-ranking completo (F3) · barra da cadeia/Sankey (F4) ·
+README/lockup/favicon do repo (F5) · acessibilidade/responsivo/screenshots e o
+portão final de regressão (F6).
+
+**VIS-07 — o que ainda se cumpre via viewer legado:** o seletor de arquivo
+avulso, o `?compare=` e o `?forge=` seguem só no legado (`../viewer/`, intocado).
+Este app cobre play/pause, velocidades, scrub, `?run=` e — desde a F2 — o clique
+na crônica para saltar ao marco, além de expor `window.ptqJumpToTick`.
