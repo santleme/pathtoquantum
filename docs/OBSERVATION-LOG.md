@@ -229,12 +229,84 @@ decisão e não tem efeito colateral fora da lista declarada.
   worktree próprio da `obs/guarda-v2` e a árvore principal foi
   devolvida como encontrada.
 
-## O que falta (fatias seguintes da SPEC §4)
+## 2026-10-27 — Fatia 4 entregue (migração da guarda v2 FECHADA)
 
-- **Fatia 4**: aposentar as fachadas legadas do `Engine` e os
-  canais v1 da guarda (`comp._offers/_buys`, `engine.claimed_by`)
-  quando nenhum programa vivo depender deles.
-- Nota: a corrida forge-v1 (sub-issue #6) agora roda sobre a
-  fronteira v2 — programas novos já nascem no contrato
-  `decide(self, obs)`; programas antigos (assinatura legada) são
-  rejeitados no loader com a explicação do contrato.
+**Fachadas do Engine aposentadas.** Grep no repo inteiro (código,
+testes, notebooks, scripts, docs) provou **zero chamadores** de
+cada uma — as fases vivem na política (`HeuristicPolicy`) e quem as
+orquestra é o `decide`:
+
+- `Engine._pick_deposit` — removida.
+- `Engine._build_downstream` — removida.
+- `Engine._plan_buys` — removida.
+- `Engine._buffer` — removida.
+- `Engine._plan_sells` — removida.
+
+(O overlay histórico de `experiments/degrau1/` não era chamador:
+ele remenda métodos da *política*, que seguem intactos.)
+
+**Exceções fundamentadas** — fachadas com chamador vivo não
+previsto na SPEC, mantidas e registradas conforme a regra da
+fatia:
+
+- `Engine._decide` — deixou de ser fachada: é a entrada canônica
+  da decisão (zera `_offers`/`_buys`, constrói a Observation
+  selada, valida e aplica as intenções), chamada pelo passo do
+  motor (`step`) e por testes de equipamentos/intenções.
+- `Engine._reserve` — chamador vivo único: `tests/test_equip_v2.py`
+  monta o caixa do cenário a partir da reserva da política por ele.
+- `Engine._use_tools` — chamadores vivos: `tests/test_engine.py` e
+  `tests/test_v1.py` exercitam a fase de ferramentas isolada por
+  ele. Removê-lo exigiria reescrever a mecânica desses testes sem
+  ganho de fronteira — o canal não é alcançável por programas.
+
+**Canais v1 da guarda aposentados** (`src/mundo/program.py`): os
+quatro donos legais de subscrito da era v0/v1 — `comp._offers`,
+`comp._buys`, `comp.knowledge` e `engine.claimed_by` — saíram de
+`LEGAL_SUBSCRIPT_OWNERS` (a constante virou
+`RETIRED_SUBSCRIPT_OWNERS`) e viraram **rejeição nomeada**:
+"canal v1 aposentado (guarda v2, fatia 4): a decisão é
+declarativa; devolva intenções de mundo.intentions em
+decide(self, obs) — Buy/Offer para ordens, Probe para sondagem e
+conhecimento, RegisterClaim para claims". Vale para atribuição,
+deleção e apelido contaminado de `comp`; a mensagem genérica dos
+demais subscritos do mundo foi atualizada para o mesmo contrato.
+Nenhum programa vivo dependia dos canais: a semente da geração 0
+é declarativa desde a fatia 3 e grep em `forge/` não achou fonte
+nenhuma com os canais. Nota de escopo: a tolerância histórica de
+atributos `comp.tools.*` na guarda permanece — fora do escopo
+nomeado desta fatia e inalcançável na prática, pois o programa só
+recebe a Observation.
+
+**Prova de que o mundo não mudou.**
+
+- Suíte: **240/240** (232 da base da branch + 8 novos: seis casos
+  de rejeição dos canais aposentados — os quatro canais, apelido
+  e deleção —, a rejeição na carga via `load_program_policy` e a
+  prova estrutural das fachadas removidas/mantidas).
+- `tests/test_golden.py` **sem edição**: os 4 hashes da Fase 1
+  intactos; `test_seed_generation0_bit_identical` e
+  `test_evaluator_seed_matches_genome0_score` **sem edição** e
+  verdes (S da semente == S do genoma 0; episódio bit-idêntico).
+- `test_native_parity.py` verde: o motor Python segue
+  bit-idêntico ao núcleo nativo C++.
+- Único teste reescrito: `test_guard_allows_legal_channels`
+  (`tests/test_forge.py`) — os quatro canais aposentados saíram
+  da lista de legais, que é exatamente a aceitação desta fatia;
+  as asserções dos canais restantes (`self.*`, `comp.tools.*`,
+  dict próprio) não mudaram.
+- Nota operacional: a fatia foi construída em worktree próprio
+  sobre a `obs/guarda-v2`; a árvore principal compartilhada ficou
+  exatamente como encontrada (branch `noite/prep-smoke-forja`).
+
+## Estado final
+
+A migração da guarda v2 está **fechada** (fatias 1–4 entregues):
+a política — heurística, genoma ou programa — só enxerga a
+Observation tipada, só age por intenções declarativas validadas
+pelo motor, e a superfície v1 (fachadas do `Engine` e canais de
+escrita da guarda) foi aposentada. Nota viva: a corrida forge-v1
+(sub-issue #6) roda sobre esta fronteira — programas novos já
+nascem no contrato `decide(self, obs)`; programas antigos
+(assinatura legada ou canais v1) são rejeitados na carga com a
+explicação do contrato.

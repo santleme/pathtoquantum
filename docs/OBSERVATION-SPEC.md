@@ -393,10 +393,26 @@ de consumo do RNG do episódio não muda um draw.
 - `obs.act` durante a decisão levanta erro claro (selo); programa
   da forja que toca `obs.act` é rejeitado na carga pela guarda.
 
-### Fatia 4 — Aposentar a superfície v1
+### Fatia 4 — Aposentar a superfície v1 (FEITA)
 
 - Remover as fachadas legadas do `Engine` se nenhum chamador restar,
   e os canais v1 da guarda (`comp._offers/_buys/knowledge`,
   `engine.claimed_by`) quando nenhum programa vivo depender deles.
 - Aceitação: suíte verde; `grep` sem chamadores; guarda rejeitando
   os canais antigos com mensagem apontando para os verbos novos.
+- **Resultado:** fachadas `_pick_deposit`, `_build_downstream`,
+  `_plan_buys`, `_buffer` e `_plan_sells` removidas do `Engine`
+  (grep no repo inteiro: zero chamadores — as fases vivem na
+  política e quem as orquestra é o `decide`). **Exceções
+  fundamentadas** (detalhe no LOG): `_decide` permanece — é a
+  entrada canônica da decisão, chamada pelo passo do motor, não
+  mais uma fachada; `_reserve` e `_use_tools` permanecem como
+  superfície de fase que testes de equipamentos/ferramentas
+  exercitam direto. Os quatro canais v1 saíram dos donos legais
+  de subscrito da guarda e viraram rejeição nomeada ("canal v1
+  aposentado… devolva intenções de `mundo.intentions` —
+  Buy/Offer, Probe, RegisterClaim), valendo para atribuição,
+  deleção e apelido contaminado; nenhum programa vivo dependia
+  deles (a semente é declarativa desde a fatia 3). Suíte 240/240;
+  goldens intactos; paridade nativa verde. Com esta fatia, a
+  migração da guarda v2 está **fechada**.
