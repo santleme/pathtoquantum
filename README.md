@@ -23,7 +23,7 @@ Rode o quickstart abaixo (2 comandos) e abra **`viewer/index.html`** no navegado
 
 ## 📖 A primeira história (smoke real, seed 42, 24 meses)
 
-Isto não é um pitch: é a crônica que o motor já escreveu numa corrida de 2 anos (jan/2027–dez/2028), reproduzível ao dólar com o quickstart abaixo.
+Isto não é um pitch: é a crônica que o motor escreveu no smoke que batizou o projeto (mundo v0, seed 42, 2 anos: jan/2027–dez/2028). O mundo cresceu desde então — o quickstart abaixo roda o mundo **atual** (v1, com mercado vivo e as 4 ferramentas) e escreve uma história nova, mais rica; esta fica como o registro histórico da primeira.
 
 - **jan/2027** — Oito empresas nascem na América do Sul com US$ 320M somados em caixa. A **Órbita Systems** (Visionária, Santiago, US$ 35M) sonda o Salar de Atacama e encontra um depósito **rico**.
 - **fev–jun/2027** — Órbita vira uma locomotiva: primeira mina, primeira refinaria, primeira fábrica de componentes. É a primeira em **todos** os elos da cadeia. Enquanto isso, a **Nexo Indústrias** sonda Escondida, no norte do Chile — rica. E Carajás — rica também.
@@ -142,7 +142,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m mundo.cli --seed 42 --ticks 24 --out viewer
 ```
 
-Abra **`viewer/index.html`** no navegador: o mapa da América do Sul com os territórios, o placar das empresas e a crônica da corrida que você acabou de gerar — os mesmos 24 meses da "primeira história" acima.
+Abra **`viewer/index.html`** no navegador: o mapa da América do Sul com os territórios, o placar das empresas e a crônica da corrida de 24 meses que você acabou de gerar no mundo atual.
 
 Para mexer no mundo: `--companies N` muda o número de empresas, `--seed N` muda o destino, e `--events eventos.json` injeta atos de Deus (choque de preço, descoberta, sanção).
 
