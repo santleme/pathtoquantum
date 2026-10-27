@@ -80,7 +80,7 @@ def test_diff_applied_and_guard_clean(llm):
     assert SEARCH_LINE not in child
     assert validate_program(child) == []
     assert program_hash(child) != program_hash(SEED)
-    assert desc.startswith("llm[gemini/gemini-2.5-flash-lite] diff")
+    assert desc.startswith("llm[gemini/gemini-3-flash-preview] diff")
     assert "second mine" in desc
 
 
@@ -166,7 +166,7 @@ def test_prompt_carries_feedback(llm):
     assert "mina aberta" in user             # Crônica
     assert "INSPIRATION" in user
     assert "EvolvedPolicy" in user          # o fonte do pai
-    assert seen["model"] in ("gemini-2.5-flash-lite", "gemini-2.5-pro")
+    assert seen["model"] in ("gemini-3-flash-preview", "gemini-3.5-flash")
 
 
 def test_groq_only_route(llm):

@@ -9,12 +9,16 @@ MESMA interface do mutador programático do smoke —
 — mas quem muta é um ensemble de LLMs via endpoints OpenAI-compatible:
 
 - **Gemini (primária)**, no desenho da config validado pela pesquisa
-  (docs/PESQUISA-MUTADOR-FORGE-V1.md §4): ``gemini-2.5-flash-lite``
-  no volume (peso 0,8) e ``gemini-2.5-pro`` nos saltos (peso 0,2);
+  (docs/PESQUISA-MUTADOR-FORGE-V1.md §4), com a EMENDA DE MODELOS de
+  27/10/2026: a família Gemini 2.5 retorna 404 para a chave do
+  fundador (a Version 6 do kernel morreu assim: 300/300 mutações
+  `rejected_llm`), então o volume (peso 0,8) é
+  ``gemini-3-flash-preview`` e os saltos (peso 0,2) são
+  ``gemini-3.5-flash`` — ambos com sonda HTTP 200 verificada;
 - **Groq (fallback)**: se a chamada Gemini falhar (rate limit 429,
   5xx, timeout, resposta vazia/inutilizável), a mutação cai para os
   modelos coder da Groq — ``openai/gpt-oss-120b`` e, persistindo a
-  falha, ``qwen/qwen3-32b`` (linha coder atual da Groq, out/2026).
+  falha, ``qwen/qwen3.8-27b`` (a Groq não serve mais o qwen3-32b).
 
 Sem nenhuma chave, o ensemble é o que houver: só Groq vira rota
 única; só Gemini dispensa o fallback. Sem chave nenhuma,
@@ -49,10 +53,10 @@ import urllib.request
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
-GEMINI_VOLUME_MODEL = "gemini-2.5-flash-lite"   # peso 0,8 — volume
-GEMINI_LEAP_MODEL = "gemini-2.5-pro"            # peso 0,2 — saltos
+GEMINI_VOLUME_MODEL = "gemini-3-flash-preview"   # peso 0,8 — volume (emenda 27/10: 2.5-flash-lite dá 404 p/ esta chave)
+GEMINI_LEAP_MODEL = "gemini-3.5-flash"            # peso 0,2 — saltos (emenda 27/10: 2.5-pro idem; 3.1-pro-preview 429 na cota)
 GEMINI_LEAP_WEIGHT = 0.2
-GROQ_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3-32b")
+GROQ_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.8-27b")   # qwen3-32b não é mais servido pela Groq
 
 TEMPERATURE = 0.7
 MAX_TOKENS = 16000
@@ -126,12 +130,19 @@ def load_api_keys() -> dict:
 # --------------------------------------------------------------------- #
 # Cliente HTTP OpenAI-compatible (transporte injetável p/ testes)
 # --------------------------------------------------------------------- #
+# A Cloudflare da Groq bloqueia a assinatura default do urllib
+# (erro 1010, verificado 27/10/2026) — um User-Agent comum resolve.
+_USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
 def _default_transport(url: str, headers: dict, payload: dict,
                        timeout: int):
     """POST JSON via urllib. Devolve (status, corpo_texto)."""
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST",
-        headers={"Content-Type": "application/json", **headers})
+        headers={"Content-Type": "application/json",
+                 "User-Agent": _USER_AGENT, **headers})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read().decode("utf-8", "replace")

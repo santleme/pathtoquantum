@@ -99,3 +99,36 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   mini-corrida ponta a ponta com avaliação cega em blocos tiny).
 - Branch: `forja/forge-v1` (commits 73eb02c + c9e32de + este
   registro), a partir de `obs/guarda-v2` @ 5cc1b31.
+
+## Version 6 e emenda de modelos (27/10/2026)
+
+- **Version 6 do kernel** (Save & Run All, 13:01:17 -03): os Secrets
+  foram anexados pelo editor e a sonda respondeu **presente** para
+  GEMINI_API_KEY e GROQ_API_KEY. A execução concluiu em 163,8 s, mas
+  as **300/300 mutações foram `rejected_llm`**: a lineup antiga
+  (`gemini-2.5-pro` e `gemini-2.5-flash-lite`) retorna HTTP 404 para
+  a chave do fundador e os fallbacks da Groq também falharam.
+  Campeão = a própria semente `prog:fcf3162c8751`; veredito impresso
+  **FORGE-V1: REPROVADO/AJUSTAR** — inválido como teste da hipótese,
+  porque o mutador nunca gerou um candidato.
+- **Correção** (branch `forja/forge-v1-modelos-kaggle`, decisão do
+  fundador de relançar no Kaggle): lineup emendada para
+  `gemini-3-flash-preview` (volume, peso 0,8), `gemini-3.5-flash`
+  (saltos, peso 0,2) e fallbacks Groq `openai/gpt-oss-120b` →
+  `qwen/qwen3.8-27b` — modelos com sonda HTTP 200 verificada nesta
+  chave em 27/10/2026. O transporte HTTP do mutador ganhou o
+  User-Agent comum que destrava a Cloudflare da Groq (erro 1010).
+  `forge/llm_mutator.py` e `forge/config.yaml` espelhados; testes
+  atualizados.
+- **Verificação estrutural**: suíte da forja **59/59** com
+  `PYTHONPATH=src` deste checkout. Sem o PYTHONPATH, o pytest importa
+  `mundo` de outro checkout e um teste falha na allowlist — artefato
+  de ambiente, não da corrida: nesta branch `mundo.intentions` está
+  permitido e semente/filho passam na guarda.
+- **Relançamento**: bundle novo `pascalcoimbra/mundo-autonomo-src13`
+  (mesmo mecanismo: ZIP `mundo-src.zip` com src/ + forge/ +
+  pyproject.toml) e nova versão do mesmo kernel
+  `pascalcoimbra/ptq-forge-v1` com o metadata
+  `notebooks/kernel-metadata-forge-v1-src13.json`. Protocolo
+  inalterado: 300 iterações, 5 ilhas, cascata e avaliação cega nas
+  seeds 9901–9932 com a mesma régua de veredito.
