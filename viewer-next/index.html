@@ -27,6 +27,36 @@
   .stage { color:var(--dim); font-size:11px; }
   #err { color:#ff8fa3; padding:8px 16px; display:none; }
   .legend { font-size:11px; color:var(--dim); padding:6px 2px; }
+  /* Feed da crônica (F2, VIS-03/04): hierarquia por tier, selo por kind, marca de novo */
+  #feedmeta { font-size:11px; color:var(--dim); margin:0 0 6px; }
+  .feed-item { display:flex; gap:8px; width:100%; text-align:left; align-items:flex-start;
+    background:transparent; border:none; border-left:3px solid var(--line); border-bottom:1px dashed #22304f;
+    border-radius:0; padding:6px 6px 6px 8px; color:var(--ink); font:inherit; font-size:12.5px; cursor:pointer; }
+  .feed-item:hover, .feed-item:focus-visible { background:#1a2440; outline:1px solid var(--line); }
+  .feed-item .kicon-wrap { flex:0 0 auto; margin-top:1px; color:var(--dim); }
+  .feed-item .kicon { width:16px; height:16px; display:block; }
+  .feed-item .fbody { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .feed-item .fmeta { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .feed-item .fdate { color:var(--dim); font-size:11.5px; }
+  .feed-item .ftext { line-height:1.35; }
+  .tag { font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim);
+    border:1px solid var(--line); border-radius:999px; padding:0 6px; }
+  .tag-new { color:#0b1020; background:var(--gold); border-color:var(--gold); font-weight:bold; }
+  .chip { display:inline-flex; gap:5px; align-items:center; font-size:11.5px; color:var(--ink); }
+  .chip .dot { width:9px; height:9px; }
+  .chip .dot.hollow { background:transparent; border:1.5px solid var(--dim); border-radius:50%; }
+  .feed-item.tier-marco { border-left:4px solid var(--gold); background:#182238; }
+  .feed-item.tier-marco .fdate { color:var(--gold); }
+  .feed-item.tier-marco .ftext { font-weight:bold; }
+  .feed-item.tier-marco .kicon-wrap { color:var(--gold); }
+  .feed-item.tier-estrutural { border-left-color:#7ea8d8; }
+  .feed-item.tier-estrutural .kicon-wrap { color:#7ea8d8; }
+  .feed-item.tier-fundacao .kicon-wrap { color:#9ae6b4; }
+  .feed-item.tier-rotina { font-size:12px; }
+  .feed-item.tier-rotina .ftext { color:#c3cbdf; }
+  .feed-item.is-new { animation: feed-pulse 1.1s ease-in-out 3; }
+  @keyframes feed-pulse { 0%,100% { box-shadow: inset 0 0 0 0 rgba(255,209,102,0); } 50% { box-shadow: inset 0 0 0 2px rgba(255,209,102,.75); } }
+  @media (prefers-reduced-motion: reduce) { .feed-item.is-new { animation: none; } }
   @media (max-width: 1023px) { main { grid-template-columns: 1fr; height:auto; } #mapwrap { height: 60vh; } aside { border-left:none; } }
 </style>
 </head>
@@ -52,7 +82,8 @@
     <h2>Placar das empresas</h2>
     <div id="board"></div>
     <div class="legend" id="legend"></div>
-    <h2>Crônica (últimos eventos)</h2>
+    <h2>Crônica</h2>
+    <p id="feedmeta"></p>
     <div id="feed"></div>
   </aside>
 </main>

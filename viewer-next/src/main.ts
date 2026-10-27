@@ -1,7 +1,8 @@
-// Viewer-next (F0+F1) — "A Terra de verdade": base cartográfica real (Natural Earth),
-// entidades orientadas a dados, replay básico compatível com ?run=. Ver SPEC-VISUAL-WOW
-// VIS-01/02/07 e ADR-001. Crônica completa (VIS-03/04), lentes (VIS-05) e cadeia (VIS-06)
-// são as fatias F2–F4 — aqui o feed é um extrato simples dos eventos narrativos.
+// Viewer-next (F0+F1+F2) — "A Terra de verdade" + "A crônica vira show": base
+// cartográfica real (Natural Earth), entidades orientadas a dados, replay compatível
+// com ?run=, feed da crônica por kind/company com hierarquia, destaque de novo e
+// clique-para-saltar (VIS-01/02/03/04/07, SPEC-VISUAL-WOW). Lentes (VIS-05) e cadeia
+// (VIS-06) são as fatias F3–F4.
 import { feature } from 'topojson-client';
 import type { FeatureCollection } from 'geojson';
 import {
@@ -14,6 +15,7 @@ import {
   type WorldData,
 } from './contracts';
 import { cellToLonLat, citiesFromWorld, depositsFromFrame } from './entities';
+import { feedItemHtml, narrativeItems, newItemIndexes, tickFromFeedTarget } from './feed';
 import { CanvasMapSurface, type MapSurface } from './mapsurface';
 import { resourceInfo, STAGE_LABELS } from './resources';
 
@@ -25,6 +27,8 @@ let world: WorldData;
 let surface: MapSurface;
 let idx = 0;
 let timer: number | undefined;
+/** Lote de eventos "novos" do frame atual (VIS-04) — índices na crônica original. */
+let newBatch: Set<number> = new Set();
 
 interface Route {
   from: [number, number];
@@ -62,6 +66,8 @@ async function loadAll(): Promise<void> {
   const scrub = $('scrub') as HTMLInputElement;
   scrub.max = String(run.frames.length - 1);
   scrub.value = '0';
+  // Primeiro frame: o lote de novos é tudo que já aconteceu até ele (VIS-04).
+  newBatch = newItemIndexes(run.chronicle, null, run.frames[0].tick);
   resize();
   render();
   play();
@@ -215,19 +221,39 @@ function renderBoard(f: Frame): void {
 }
 
 function renderFeed(f: Frame): void {
-  const evs = run.chronicle.filter((e) => e.tick <= f.tick && e.kind !== 'flows' && e.text);
-  $('feed').innerHTML = evs
-    .slice(-30)
+  // Cor da empresa vem do frame atual (nome → cor); fora do frame = sem cor (VIS-03).
+  const colorByName = new Map(f.companies.map((c) => [c.name, c.color]));
+  const items = narrativeItems(run.chronicle, f.tick);
+  // DOM em ordem cronológica reversa (mais recente no topo, como o legado); a lista
+  // conferível em ordem está em narrativeItems (testes + script de âncoras).
+  $('feed').innerHTML = [...items]
     .reverse()
-    .map((e) => `<div class="row" style="grid-template-columns:1fr"><span><b style="color:#ffd166">${e.date}</b> — ${e.text}</span></div>`)
+    .map((item) =>
+      feedItemHtml(item, item.event.company ? colorByName.get(item.event.company) : undefined, newBatch.has(item.index)),
+    )
     .join('');
+  $('feedmeta').textContent = `${items.length} eventos narrativos até o tick ${f.tick} · clique num evento salta o replay`;
+}
+
+/** Salto do replay ao tick (VIS-07): seek — não gera lote de novos (VIS-04). */
+function jumpToTick(tick: number): void {
+  stop();
+  ($('play') as HTMLButtonElement).textContent = '▶ tocar';
+  newBatch = new Set();
+  idx = frameIndexForTick(run, tick);
+  render();
 }
 
 function play(): void {
   stop();
   const speed = Number(($('speed') as HTMLSelectElement).value);
   timer = window.setInterval(() => {
-    idx = (idx + 1) % run.frames.length;
+    const next = (idx + 1) % run.frames.length;
+    // Avanço sequencial: a marca de novo é do lote que entrou (VIS-04). No wrap
+    // (último frame → primeiro) o tick anda para trás: lote vazio, como no scrub.
+    newBatch =
+      next === 0 ? new Set() : newItemIndexes(run.chronicle, run.frames[idx].tick, run.frames[next].tick);
+    idx = next;
     render();
   }, speed);
   ($('play') as HTMLButtonElement).textContent = '⏸ pausar';
@@ -248,8 +274,14 @@ $('speed').addEventListener('change', () => {
   if (timer) play();
 });
 $('scrub').addEventListener('input', (e) => {
+  // Scrub é seek: nenhum evento é "novo" (VIS-04), para frente ou para trás.
+  newBatch = new Set();
   idx = Number((e.target as HTMLInputElement).value);
   render();
+});
+$('feed').addEventListener('click', (e) => {
+  const tick = tickFromFeedTarget(e.target);
+  if (tick !== null) jumpToTick(tick);
 });
 window.addEventListener('resize', resize);
 
@@ -259,9 +291,5 @@ loadAll().catch((err: Error) => {
   el.textContent = `Não foi possível carregar a corrida: ${err.message}. Verifique ?run= ou sirva a pasta com os dados (data/served/).`;
 });
 
-// Salto por marco (VIS-07): exposto para paridade com o legado/testes futuros.
-(window as unknown as { ptqJumpToTick: (t: number) => void }).ptqJumpToTick = (t: number) => {
-  stop();
-  idx = frameIndexForTick(run, t);
-  render();
-};
+// Salto por marco (VIS-07): agora é o mesmo caminho do clique no feed.
+(window as unknown as { ptqJumpToTick: (t: number) => void }).ptqJumpToTick = jumpToTick;
