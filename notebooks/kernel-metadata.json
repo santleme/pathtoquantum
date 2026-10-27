@@ -1,1 +1,16 @@
-{"category_ids": [], "code_file": "kaggle_mundo_v0.ipynb", "competition_sources": [], "dataset_sources": ["pascalcoimbra/mundo-autonomo-src"], "enable_gpu": false, "enable_internet": true, "id": "pascalcoimbra/mundo-autonomo-nascimento-v0", "is_private": true, "kernel_sources": [], "kernel_type": "notebook", "language": "python", "title": "Mundo Autonomo - Nascimento v0"}
+{
+ "category_ids": [],
+ "code_file": "kaggle_mundo_v0.ipynb",
+ "competition_sources": [],
+ "dataset_sources": [
+  "pascalcoimbra/mundo-autonomo-src2"
+ ],
+ "enable_gpu": false,
+ "enable_internet": true,
+ "id": "pascalcoimbra/mundo-autonomo-nascimento-v0",
+ "is_private": true,
+ "kernel_sources": [],
+ "kernel_type": "notebook",
+ "language": "python",
+ "title": "Mundo Autonomo - Nascimento v0"
+}
