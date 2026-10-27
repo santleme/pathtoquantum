@@ -153,3 +153,22 @@ def test_politica_customizada_recusada():
 
     with pytest.raises(ValueError):
         NativeEngine(seed=42, n_companies=8, policy=Noop())
+
+
+def test_build_dir_env(tmp_path, monkeypatch):
+    """MUNDO_NATIVE_BUILD_DIR manda o .so para um diretório gravável
+    (o caso do Kaggle: pacote em mount somente-leitura) e o motor
+    segue bit-idêntico ao Engine Python."""
+    from mundo.native import build
+
+    monkeypatch.setenv("MUNDO_NATIVE_BUILD_DIR", str(tmp_path))
+    out = build.build(force=True)
+    assert out.parent == tmp_path
+    assert out.exists()
+    assert build.module_path() == out
+
+    py = Engine(seed=42, n_companies=8)
+    nat = NativeEngine(seed=42, n_companies=8)
+    _steps(py, 2)
+    _steps(nat, 2)
+    assert _hash(nat.state_dict()) == _hash(py.state_dict())
