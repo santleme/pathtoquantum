@@ -4,6 +4,9 @@
 #       --config forge/config.yaml --iterations 300
 max_iterations: 300
 checkpoint_interval: 25
+# Fronteira do que evolui: edições do LLM fora do EVOLVE-BLOCK são
+# revertidas (revisão do PR #7 — sem isto o default é False).
+enforce_evolve_blocks: true
 
 # Ensemble barato com teto executado por max_iterations: primário
 # rápido/barato na maioria das mutações, forte como tempero.
