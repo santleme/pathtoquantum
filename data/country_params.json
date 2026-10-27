@@ -1,0 +1,114 @@
+{
+ "compiled_at": "2026-10-26",
+ "countries": {
+  "Argentina": {
+   "calibration_note": "WGI Political Stability ~percentil 35 (2023); royalties provinciais de mineração ~3% + retenções — regime inicial 5,5% sobre o opex.",
+   "royalty": 0.055,
+   "stability_mean": 0.35
+  },
+  "Bolívia": {
+   "calibration_note": "WGI Political Stability ~percentil 30 (2023); nacionalização do lítio como pano de fundo — regime inicial 6,0% sobre o opex.",
+   "royalty": 0.06,
+   "stability_mean": 0.3
+  },
+  "Brasil": {
+   "calibration_note": "WGI Political Stability ~percentil 45 (2023); CFEM de 1-3,5% sobre receita — regime inicial simplificado de 4,5% sobre o opex.",
+   "royalty": 0.045,
+   "stability_mean": 0.45
+  },
+  "Chile": {
+   "calibration_note": "WGI Political Stability ~percentil 65 (2023) — o mais estável dos grandes mineradores da região; reforma de royalties de 2023 levou a carga efetiva de grandes mineradoras de cobre a até ~46,5% sobre o lucro — aqui simplificada como surcharge de 5,0% sobre o opex.",
+   "royalty": 0.05,
+   "stability_mean": 0.65
+  },
+  "Colômbia": {
+   "calibration_note": "WGI Political Stability ~percentil 38 (2023); regime inicial de 4,5% sobre o opex.",
+   "royalty": 0.045,
+   "stability_mean": 0.38
+  },
+  "Paraguai": {
+   "calibration_note": "WGI Political Stability ~percentil 45 (2023); sem mineração relevante — o regime afeta instalações de jusante sediadas no país.",
+   "royalty": 0.035,
+   "stability_mean": 0.45
+  },
+  "Peru": {
+   "calibration_note": "WGI Political Stability ~percentil 40 (2023); royalties de 1-12% sobre lucro operacional — regime inicial simplificado de 4,0% sobre o opex.",
+   "royalty": 0.04,
+   "stability_mean": 0.4
+  },
+  "Uruguai": {
+   "calibration_note": "WGI Political Stability ~percentil 75 (2023) — o país mais estável da América do Sul; sem mineração relevante — regime inicial de 3,0% sobre o opex.",
+   "royalty": 0.03,
+   "stability_mean": 0.75
+  }
+ },
+ "events_yearly": {
+  "disaster": 0.01,
+  "export_restriction": 0.02,
+  "judicial_halt": 0.007,
+  "royalty_reform": 0.06,
+  "state_jv": 0.015,
+  "subsidy": 0.04
+ },
+ "force_events": [],
+ "model": {
+  "capex_premium": 0.25,
+  "disaster_s_shock": 0.05,
+  "election_period": 48,
+  "election_smean_shift": 0.18,
+  "election_stagger": 6,
+  "election_tau_steps": [
+   -0.01,
+   0.0,
+   0.01,
+   0.02
+  ],
+  "fx_beta": 1.5,
+  "fx_max": 2.5,
+  "fx_min": 0.5,
+  "fx_reversion": 0.08,
+  "fx_sigma": 0.01,
+  "halt_months_disaster": 2,
+  "halt_months_judicial": 3,
+  "jv_smean_drop": 0.08,
+  "jv_tau_step": 0.01,
+  "local_opex_frac": 0.45,
+  "reform_hot_ratio": 1.5,
+  "reform_tau_step": 0.02,
+  "restriction_months": 12,
+  "restriction_parity_surcharge": 0.6,
+  "s_max": 0.98,
+  "s_min": 0.02,
+  "s_reversion": 0.03,
+  "s_sigma": 0.02,
+  "smean_max": 0.9,
+  "smean_min": 0.15,
+  "subsidy_smean_gain": 0.03,
+  "subsidy_tau_step": -0.01,
+  "tau_max": 0.12,
+  "tau_min": 0.02
+ },
+ "purpose": "Parâmetros de país/política (B3) e comércio externo (B4a) do Degrau 1 Fase 3: estabilidade S com reversão à média (baselines WGI/ICRG), câmbio-índice, royalties sobre o opex, motor de eventos endógeno com frequências latino-americanas 2015-2025 e pseudo-participante externo elástico na paridade. DADO versionado com fontes (DEGRAU1-DESIGN §4/B3+B4a; ESTUDO-MOTOR-AMBIENTE §B3/B4) — calibrar é editar este arquivo, nunca o motor.",
+ "schema_version": 1,
+ "sources": [
+  {
+   "date": "2023",
+   "publisher": "World Bank",
+   "title": "Worldwide Governance Indicators — Political Stability and Absence of Violence (percentis por país)",
+   "url": "https://www.worldbank.org/en/publication/worldwide-governance-indicators"
+  },
+  {
+   "date": "2015-2025",
+   "publisher": "Estudo de ambiente (repo)",
+   "title": "ESTUDO-MOTOR-AMBIENTE §B3/B4 — frequências de eventos ancoradas: reforma de royalties do Chile (2023), Estratégia Nacional do Lítio do Chile (abr/2023), nacionalização do lítio do México (fev/2023), fechamento de Cobre Panamá (2023)",
+   "url": ""
+  }
+ ],
+ "trade": {
+  "capacity_factor": 2.0,
+  "freight": 0.08,
+  "max_spread_mult": 3.0,
+  "ore_scale": 300.0,
+  "tariff": 0.12
+ }
+}
