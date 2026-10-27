@@ -27,6 +27,10 @@ inventar dado aqui.
 Tudo é função pura sobre listas de dicts (o formato JSON da crônica e
 dos frames), ordenado para saída determinística: disputas por
 (first_tick, depósito); guerras por (trough_tick, commodity).
+
+Fatia (b), na mesma regra: retrospectiva por era de 60 ticks
+(`era_retrospectives`) — líderes ao fim da era, viradas, primeiras
+falência/entrega/elos e contagens — derivada só de eventos e frames.
 """
 
 from __future__ import annotations
@@ -35,6 +39,10 @@ import re
 from statistics import median
 
 _PROBE_RE = re.compile(r"sonda (.+?) e encontra")
+_LINK_STAGE_NAMES = {"extração": 1, "refino": 2, "componentes": 3,
+                      "dispositivos": 4, "supercomputador": 5}
+_LINK_STAGE_RE = re.compile(
+    r"elo de (extração|refino|componentes|dispositivos|supercomputador)")
 
 _MIN_TOUCHES = 3
 _WAR_DROP = 0.25        # queda mínima da commodity no passo
@@ -126,9 +134,173 @@ def detect_price_wars(frames: list[dict]) -> list[dict]:
     return wars
 
 
+_ERA_TICKS = 60  # a era do motor: Engine._era_summary a cada 60 ticks
+
+
+def _frame_leaders(frame: dict) -> tuple:
+    """(líder em caixa, líder na cadeia, elo do líder, vivas, total).
+
+    Líderes só entre empresas vivas, como o motor (`_leader` filtra
+    `alive`); empate resolve por maior valor e menor id, o mesmo
+    critério do motor (`(valor, -cid)`). Sem empresas no frame, tudo
+    None — sem inventar líder.
+    """
+    companies = frame.get("companies") or []
+    alive = [c for c in companies if c.get("alive")]
+    if not alive:
+        return None, None, None, (len([c for c in companies
+                                       if c.get("alive")])
+                                  if companies else None), \
+            (len(companies) if companies else None)
+    cash_leader = max(alive, key=lambda c: (c.get("cash", 0),
+                                            -c.get("id", 0)))
+    stage_leader = max(alive, key=lambda c: (c.get("stage", 0),
+                                             -c.get("id", 0)))
+    return (cash_leader.get("name"), stage_leader.get("name"),
+            stage_leader.get("stage", 0),
+            len(alive), len(companies))
+
+
+def era_retrospectives(events: list[dict], frames: list[dict]) -> list[dict]:
+    """Retrospectiva por era (fatia b), ordenada por era.
+
+    Agrupa eventos e frames por `tick // 60`. Cada era registra os
+    líderes ao fim (último frame da era), as viradas de liderança
+    (`rivalry`), as primeiras falência / entrega de supercomputador /
+    elos da cadeia, e as contagens da era. Entrega de supercomputador
+    é só o `record` "entrega um SUPERCOMPUTADOR": o recorde de elo
+    ("elo de supercomputador") é marco de cadeia, não entrega.
+
+    Limites do dado (não inventar para cobri-los):
+    - a contagem é de ENTREGAS (eventos), não de unidades: o motor
+      soma unidades por lote (capacidade da montadora = 2/mês) e
+      emite um `record` por lote, sem campo de unidades;
+    - líderes filtram só empresas vivas, enquanto o `_era_summary`
+      do motor considera todas — uma falida sem comprador que
+      mantivesse o maior estágio divergiria;
+    - "ao fim da era" é o último frame (frames a cada 12 ticks),
+      até 11 ticks defasado do estado vivo; `end_tick` é o último
+      tick observado, não o fim da era.
+    """
+    by_era: dict[int, dict] = {}
+
+    def era_bucket(era: int) -> dict:
+        return by_era.setdefault(era, {
+            "events": [], "frames": [],
+        })
+
+    for e in sorted(events, key=lambda x: x.get("tick", 0)):
+        era_bucket(e.get("tick", 0) // _ERA_TICKS)["events"].append(e)
+    for f in sorted(frames, key=lambda x: x.get("tick", 0)):
+        era_bucket(f.get("tick", 0) // _ERA_TICKS)["frames"].append(f)
+
+    out = []
+    for era in sorted(by_era):
+        bucket = by_era[era]
+        evs, frs = bucket["events"], bucket["frames"]
+        ticks = [e.get("tick", 0) for e in evs] + \
+                [f.get("tick", 0) for f in frs]
+        start_tick, end_tick = era * _ERA_TICKS, max(ticks)
+        cash_leader = stage_leader = stage = None
+        alive = companies = None
+        if frs:
+            cash_leader, stage_leader, stage, alive, companies = \
+                _frame_leaders(frs[-1])
+        changes, first_links = [], []
+        first_bankruptcy = first_super = None
+        bankruptcies = acquisitions = deliveries = 0
+        for e in evs:
+            kind = e.get("kind")
+            if kind == "rivalry":
+                changes.append({
+                    "tick": e.get("tick", 0),
+                    "metric": (e.get("data") or {}).get("metric"),
+                    "company": e.get("company"),
+                })
+            elif kind == "bankruptcy":
+                bankruptcies += 1
+                if first_bankruptcy is None:
+                    first_bankruptcy = {"company": e.get("company"),
+                                        "tick": e.get("tick", 0)}
+            elif kind == "acquisition":
+                acquisitions += 1
+            elif kind == "chain_link":
+                link_stage = (e.get("data") or {}).get("stage")
+                if not isinstance(link_stage, int):
+                    # Crônicas antigas (ex.: viewer da corrida de
+                    # nascimento) trazem data vazio: o estágio vive só
+                    # no texto "elo de <nome>". Derivar daí, sem
+                    # inventar: sem nome reconhecível, sem elo.
+                    m = _LINK_STAGE_RE.search(e.get("text") or "")
+                    link_stage = _LINK_STAGE_NAMES[m.group(1)] \
+                        if m else None
+                if isinstance(link_stage, int):
+                    first_links.append({"stage": link_stage,
+                                        "company": e.get("company"),
+                                        "tick": e.get("tick", 0)})
+            elif kind == "record" and "entrega um SUPERCOMPUTADOR" in \
+                    (e.get("text") or ""):
+                deliveries += 1
+                if first_super is None:
+                    first_super = {"company": e.get("company"),
+                                   "tick": e.get("tick", 0)}
+        parts = []
+        if cash_leader is not None:
+            parts.append(f"líder em caixa ao fim: {cash_leader}")
+        if stage_leader is not None:
+            parts.append(f"líder na cadeia ao fim: {stage_leader} "
+                         f"(elo {stage})")
+        if changes:
+            desc = ", ".join(
+                f"{c['metric']} por {c['company']} no tick {c['tick']}"
+                for c in changes)
+            parts.append(f"viradas de liderança: {len(changes)} ({desc})")
+        if first_bankruptcy is not None:
+            parts.append(f"primeira falência: "
+                         f"{first_bankruptcy['company']} "
+                         f"(tick {first_bankruptcy['tick']})")
+        if first_super is not None:
+            parts.append("primeira entrega de SUPERCOMPUTADOR: "
+                         f"{first_super['company']} "
+                         f"(tick {first_super['tick']})")
+        if first_links:
+            desc = ", ".join(
+                f"elo {l['stage']} por {l['company']} "
+                f"(tick {l['tick']})" for l in first_links)
+            parts.append(f"primeiros elos da cadeia: {desc}")
+        counts = (f"falências: {bankruptcies}; aquisições: "
+                  f"{acquisitions}; entregas de supercomputador: "
+                  f"{deliveries}")
+        if alive is not None:
+            counts += f"; empresas vivas ao fim: {alive}/{companies}"
+        parts.append(counts)
+        out.append({
+            "era": era,
+            "start_tick": start_tick,
+            "end_tick": end_tick,
+            "cash_leader": cash_leader,
+            "stage_leader": stage_leader,
+            "stage_leader_stage": stage,
+            "leadership_changes": changes,
+            "first_bankruptcy": first_bankruptcy,
+            "first_supercomputer": first_super,
+            "first_links": first_links,
+            "bankruptcies": bankruptcies,
+            "acquisitions": acquisitions,
+            "supercomputer_deliveries": deliveries,
+            "alive": alive,
+            "companies": companies,
+            "text": (f"RETROSPECTIVA DA ERA {era} "
+                     f"(ticks {start_tick}–{end_tick}): "
+                     + "; ".join(parts) + "."),
+        })
+    return out
+
+
 def analyze_rich(events: list[dict], frames: list[dict]) -> dict:
-    """Análise completa da fatia (a): disputas + guerras de preço."""
+    """Análise completa: fatia (a) + retrospectivas por era (fatia b)."""
     return {
         "deposit_disputes": detect_deposit_disputes(events),
         "price_wars": detect_price_wars(frames),
+        "era_retrospectives": era_retrospectives(events, frames),
     }
