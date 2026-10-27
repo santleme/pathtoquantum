@@ -211,3 +211,48 @@ B1 e desta fase, como o B1 entrou)
   detalhe: a alternativa (creditar money_in) misturaria receita das
   empresas com receita do exterior.
 - B2 (equipamentos): Fase 4, sem código adiantado.
+
+## Infra Kaggle — novo layout de mount; loaders corrigidos e relançamentos (26/10/2026)
+
+**Diagnóstico** (kernel-sonda `pascalcoimbra/ptq-sonda-input`): o Kaggle
+mudou o layout de mount de datasets. Agora os datasets aparecem em
+`/kaggle/input/datasets/<dono>/<slug>/` com a árvore **já extraída**
+(arquivos individuais, SEM o `mundo-src.zip` dentro); os caminhos
+clássicos `/kaggle/input/<slug>/` não existem mais. A célula 1 dos
+notebooks procurava `glob('/kaggle/input/*/src/mundo/__init__.py')` e o
+zip — ambos vazios no layout novo → `SystemExit` "Fonte do pacote nao
+encontrada" na largada. O anexo (`datasetDataSources`) sempre esteve
+certo: foi essa a causa das 3 falhas do torneio v1, NÃO prontidão do
+dataset (a hipótese anterior estava errada).
+
+**Correção** (só a célula 1; nenhuma outra célula tocada — diff
+conferido célula a célula): busca recursiva
+`glob('/kaggle/input/**/src/mundo/__init__.py', recursive=True)`
+(cobre os dois layouts), `src_root` = raiz acima de `src/mundo/`;
+fallback para o `mundo-src.zip` (layout antigo) e, no torneio, para o
+`src/` local (fumaça). Aplicada em `notebooks/torneio-v1.ipynb` e
+`notebooks/veredito-b1.ipynb`; JSON válido e célula compilando nos
+dois. `veredito-b3.ipynb` fica para a frente da Fase 3 corrigir com o
+mesmo padrão ao lançar. Criado `notebooks/kernel-metadata-b1.json`
+(push do B1 por metadata própria; o `kernel-metadata.json` da raiz é
+do nascimento).
+
+**Relançamentos e estado observado**
+- **Torneio v1 → versão 4** do kernel `ptq-torneio-de-politicas-v1`
+  (kernelId 141075565, dataset src4). Log capturado da execução nova:
+  passou da célula 1 e chegou à célula In[11] (`gera_config`/CMA-ES),
+  sem `SystemExit`. Depois disso o endpoint `kernels/output` passou a
+  devolver log vazio de forma intermitente para esse kernel em
+  execução longa (o monitor reativado segue vigiando o mesmo slug).
+- **Veredito B1 → versão 3** do kernel `ptq-veredito-b1-mercado-vivo`
+  (kernelId 141074479, dataset src3). A célula 1 imprimiu
+  `pacote em /kaggle/input/datasets/pascalcoimbra/mundo-autonomo-src3`
+  — o caminho do layout novo, prova direta da correção. Corrida
+  **completa**: 8/8 corridas pareadas e **VEREDITO B1: APROVADO** —
+  eventos salientes ON > OFF em 4/4 seeds (138×119, 153×129, 155×106,
+  151×95), amplitude mediana de preços 3,33× → 4,00×, ledger fecha em
+  todas as corridas, ≥ 4 empresas vivas em todas as corridas ON.
+  Arquivo `veredito-b1.json` gerado nos outputs do kernel (coleta
+  para `results/veredito-b1/` é do monitor do B1). A adoção do B1
+  como oficial segue a régua: veredito aprovado → mercado vivo vira
+  o padrão na próxima consolidação do motor.
