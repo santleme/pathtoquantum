@@ -86,10 +86,14 @@ descartável por construção. Ele tem duas metades, espelhando o spike
 de 1 dia do estudo (§A4):
 
 **Manhã — teto do Python.** Overlay de otimizações bit-idênticas
-sobre o motor atual (hotspots 1, 2 e a variante segura do 3: totais
-por lista alinhada na mesma ordem de soma — a variante "total
-corrente por subtração" foi **rejeitada** para o overlay porque pode
-divergir no último ulp e contaminar `fill`/shares; ver
+sobre o motor atual (hotspots 1–2: `buffer` memoizado com
+invalidação por mudança de kinds; parcela estática do score do
+`pick_deposit` pré-computada). O hotspot 3 foi medido **separado**
+(`market_rt.py`): a variante "totais por lista na mesma ordem"
+mediu mais lenta e foi descartada; a variante "total corrente por
+subtração" sobreviveu aos fixtures mas não é bit-idêntica por
+construção e rende ~1,03× — fica como decisão de golden pendente,
+não como otimização (resultados completos em
 `experiments/degrau1/README.md`):
 
 - *Equivalência*: fixture determinística (seed 42) a n=8 e n=100 —
@@ -191,7 +195,11 @@ Regras da fronteira:
   (semeadura `init_by_array`, `random()` = genrand_res53,
   `uniform`/`shuffle` com a mesma aritmética) — ~100 linhas, e é o
   que preserva todos os goldens. Nenhuma contração FMA
-  (`-ffp-contract=off`; Rust não contrai por padrão).
+  (`-ffp-contract=off`; Rust não contrai por padrão). **E replica
+  a somação do CPython ≥3.12**: o `sum()` embutido usa somação
+  compensada (Neumaier) — achado do Portão 0 (§7): sem ela, os
+  totais do mercado divergem ~1 ulp do motor atual mesmo com a
+  ordem das operações idêntica.
 - **Domínio JAX (condicional, Fase 6)**: chaves PRNG com `split`
   por (mundo, tick, empresa, finalidade) — determinismo funcional
   por construção e paralelismo por mundos. É um domínio **novo**:
@@ -376,7 +384,7 @@ a Era 2**, registrada aqui para não ser reinventada.
 | **2 — B1 Mercado vivo** | §4/B1 + `market_params.json` + notebook de calibração | Ledger fecha; corrida de veredito no Kaggle: dispersão de preços e marcos/corrida **≥ baseline** (régua do PRD — crônica visivelmente mais viva, ou não entra); custo adicional ≤2% do tick |
 | **3 — B3 + B4a** | §4/B3 e §4/B4a integrados (sanção via paridade) | Idem Fase 2; eventos endógenos com frequências dentro das faixas ancoradas (±50% em 10 anos simulados × 20 seeds) |
 | **4 — B2 Equipamentos** | §4/B2 + decisões novas na `Observation`/política | Idem; disponibilidade média das frotas dentro de 78–95% conforme manutenção; nenhum arquétipo com falência 100% por quebra (balanceamento) |
-| **5 — Núcleo nativo (CONDICIONAL)** | Rust/PyO3 (preferência do estudo: sem FMA por padrão, ecossistema provado) com C++/nanobind como alternativa equivalente; wheel pré-compilado distribuído no dataset de fontes do Kaggle | Só abre se o Portão 0 (ou projeção futura refeita) mandar: **projeção > 45 min E kernel ≥ 15×**. Para virar oficial: fixtures §3.5 bit-idênticas 100% + speedup medido ≥15× nas fases portadas |
+| **5 — Núcleo nativo (CONDICIONAL → ABERTA pelo Portão 0, §7)** | Rust/PyO3 (preferência do estudo: sem FMA por padrão, ecossistema provado) com C++/nanobind como alternativa equivalente; wheel pré-compilado distribuído no dataset de fontes do Kaggle | Portão 0 mediu: **projeção 213 min > 45 min E kernel 43,8× ≥ 15×** — fase aberta (a execução aguarda a fila das Fases 1–4, que mudam o conteúdo que o núcleo vai portar). Para virar oficial: fixtures §3.5 bit-idênticas 100% (incl. somação Neumaier, §3.3) + speedup medido ≥15× nas fases portadas |
 | **6 — JAX (ESTRATÉGICA, CONDICIONAL)** | Reescrita do núcleo como funções puras sobre as tabelas §3.1; batch de mundos em GPU; domínio RNG próprio (§3.3) | Só abre com gargalo **medido**: temporada de MARL ecológico projetada em **≥50M de ticks** ou treino a n=100 que não caiba em sessão de Kaggle após as Fases 1+5. Entrada exige ADR próprio aceitando o novo domínio de determinismo |
 
 Ordem de valor: Fases 1–4 entregam o Degrau 1 que o fundador
@@ -402,7 +410,34 @@ vivo muda o *conteúdo* das temporadas seguintes, não o protocolo.
   crônica visivelmente mais viva **não entra**, por mais realista
   que seja.
 
-## 7. Adendo — resultado do Portão 0
+## 7. Adendo — resultado do Portão 0 (medido em 26/10/2026)
 
-*(Preenchido com a medição do spike em `experiments/degrau1/`;
-números completos e protocolo em `experiments/degrau1/README.md`.)*
+Números completos, protocolo e reprodução:
+`experiments/degrau1/README.md`. Resumo:
+
+- **Equivalência do overlay Python**: bit-idêntica nos três
+  fixtures (n=8×24, n=100×24, n=8×120 — hash do `state_dict`
+  completo).
+- **Teto do Python bit-idêntico**: o overlay dos hotspots 1–2
+  mediu **mais lento** (0,85–0,87×); o hotspot 3 rende ~1,03× sem
+  garantia de bit-identidade. A estimativa de 2,5–4× do estudo
+  **não se materializou** em micro-otimizações — o melhor Python
+  bit-idêntico é o motor atual: **2,042 ms/tick a n=100**.
+  Projeção do portão: **213 min > 45 min**. (Robustez: com a
+  estimativa otimista do estudo, 0,51–0,82 ms/tick, a projeção
+  seria 53–85 min — o veredito não depende da falha do overlay.)
+- **Teto do nativo**: kernel C++/nanobind a **43,8×** (n=100) e
+  **45,8×** (n=1.000) sobre a referência em laços, nas fases
+  `_produce` + `_market`. `_produce` bit-idêntico; divergência de
+  ≤1 ulp em caixa/estoques **explicada e removível**: o `sum()` do
+  CPython 3.12 é compensado (Neumaier) — com somas ingênuas na
+  referência, a diff. cai a exatamente 0,0. A Fase 5 herda a
+  obrigação de replicar a somação (§3.3).
+
+**Veredito: PORTÃO ABERTO — núcleo nativo aprovado (Fase 5).**
+A ordem de execução não muda: Fases 1–4 primeiro (o mundo vivo
+define o conteúdo final do `step()` que o núcleo vai portar;
+portar antes seria pagar a paridade duas vezes). A Fase 1 fica
+reduzida ao que tem valor próprio — driver multiprocesso de
+episódios e, se entrar, o refactor SoA (hotspot 4) como fundação
+do núcleo, não como micro-otimização.
