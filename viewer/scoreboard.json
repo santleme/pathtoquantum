@@ -1,0 +1,66 @@
+[
+ {
+  "name": "Vetor Sul",
+  "archetype": "Verticalizadora",
+  "alive": true,
+  "cash": 50308957.75,
+  "stage": 4,
+  "facilities": 5
+ },
+ {
+  "name": "Lítio Austral",
+  "archetype": "Expansionista",
+  "alive": true,
+  "cash": 42423792.82,
+  "stage": 0,
+  "facilities": 0
+ },
+ {
+  "name": "PetroPlata",
+  "archetype": "Industrial",
+  "alive": true,
+  "cash": 39696133.11,
+  "stage": 2,
+  "facilities": 2
+ },
+ {
+  "name": "Ferra Brasil",
+  "archetype": "Cautelosa",
+  "alive": true,
+  "cash": 38863966.66,
+  "stage": 2,
+  "facilities": 2
+ },
+ {
+  "name": "Andina Prime",
+  "archetype": "Agressiva",
+  "alive": true,
+  "cash": 36160931.65,
+  "stage": 0,
+  "facilities": 0
+ },
+ {
+  "name": "Cuprum Andes",
+  "archetype": "Marqueteira",
+  "alive": true,
+  "cash": 21801050.02,
+  "stage": 4,
+  "facilities": 5
+ },
+ {
+  "name": "Órbita Systems",
+  "archetype": "Visionária",
+  "alive": true,
+  "cash": 15225667.86,
+  "stage": 4,
+  "facilities": 5
+ },
+ {
+  "name": "Nexo Indústrias",
+  "archetype": "Oportunista",
+  "alive": true,
+  "cash": 12038241.8,
+  "stage": 4,
+  "facilities": 5
+ }
+]

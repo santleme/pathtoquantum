@@ -1,0 +1,506 @@
+[
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Ferra Brasil (Cautelosa) é fundada em São Paulo com US$ 44M em caixa.",
+  "company": "Ferra Brasil",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Lítio Austral (Expansionista) é fundada em Rio de Janeiro com US$ 43M em caixa.",
+  "company": "Lítio Austral",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "PetroPlata (Industrial) é fundada em Buenos Aires com US$ 46M em caixa.",
+  "company": "PetroPlata",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Órbita Systems (Visionária) é fundada em Santiago com US$ 35M em caixa.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Cuprum Andes (Marqueteira) é fundada em Lima com US$ 40M em caixa.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Nexo Indústrias (Oportunista) é fundada em Bogotá com US$ 34M em caixa.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Andina Prime (Agressiva) é fundada em Belo Horizonte com US$ 37M em caixa.",
+  "company": "Andina Prime",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "founding",
+  "text": "Vetor Sul (Verticalizadora) é fundada em Porto Alegre com US$ 41M em caixa.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "probe",
+  "text": "Órbita Systems sonda Salar de Atacama e encontra um depósito RICO.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 0,
+  "kind": "probe",
+  "text": "Andina Prime sonda Salar de Atacama e encontra um depósito RICO.",
+  "company": "Andina Prime",
+  "data": {},
+  "date": "jan/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "probe",
+  "text": "Ferra Brasil sonda Salar de Atacama e encontra um depósito RICO.",
+  "company": "Ferra Brasil",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "probe",
+  "text": "Lítio Austral sonda Salar de Atacama e encontra um depósito RICO.",
+  "company": "Lítio Austral",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "probe",
+  "text": "PetroPlata sonda Salar de Atacama e encontra um depósito RICO.",
+  "company": "PetroPlata",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "mine",
+  "text": "Órbita Systems abre sua mina em Salar de Atacama.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "chain_link",
+  "text": "MARCO DA CADEIA: Órbita Systems é a primeira a dominar o elo de extração.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "mine",
+  "text": "Cuprum Andes abre sua mina em Salar de Uyuni.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 1,
+  "kind": "probe",
+  "text": "Vetor Sul sonda Pré-sal (Bacia de Santos) e encontra um depósito RICO.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "fev/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "probe",
+  "text": "Ferra Brasil sonda Pré-sal (Bacia de Santos) e encontra um depósito RICO.",
+  "company": "Ferra Brasil",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "probe",
+  "text": "Lítio Austral sonda Pré-sal (Bacia de Santos) e encontra um depósito RICO.",
+  "company": "Lítio Austral",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "facility",
+  "text": "Órbita Systems inaugura sua refinaria em Santiago — o refino agora é dentro de casa.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "chain_link",
+  "text": "MARCO DA CADEIA: Órbita Systems é a primeira a dominar o elo de refino.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "mine",
+  "text": "Nexo Indústrias abre sua mina em Salinas de Jujuy.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "probe",
+  "text": "Andina Prime sonda Pré-sal (Bacia de Santos) e encontra um depósito RICO.",
+  "company": "Andina Prime",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 2,
+  "kind": "mine",
+  "text": "Vetor Sul abre sua mina em Pré-sal (Bacia de Santos).",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "mar/2027"
+ },
+ {
+  "tick": 3,
+  "kind": "mine",
+  "text": "PetroPlata abre sua mina em Vaca Muerta.",
+  "company": "PetroPlata",
+  "data": {},
+  "date": "abr/2027"
+ },
+ {
+  "tick": 3,
+  "kind": "facility",
+  "text": "Cuprum Andes inaugura sua refinaria em Lima — o refino agora é dentro de casa.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "abr/2027"
+ },
+ {
+  "tick": 3,
+  "kind": "probe",
+  "text": "Vetor Sul sonda Escondida (Norte do Chile) e encontra um depósito RICO.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "abr/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "probe",
+  "text": "Ferra Brasil sonda Escondida (Norte do Chile) e encontra um depósito RICO.",
+  "company": "Ferra Brasil",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "probe",
+  "text": "Lítio Austral sonda Escondida (Norte do Chile) e encontra um depósito RICO.",
+  "company": "Lítio Austral",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "mine",
+  "text": "Órbita Systems abre sua mina em Chuquicamata.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "mine",
+  "text": "Cuprum Andes abre sua mina em Sul do Peru (Toquepala).",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "probe",
+  "text": "Nexo Indústrias sonda Escondida (Norte do Chile) e encontra um depósito RICO.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "facility",
+  "text": "Nexo Indústrias inaugura sua refinaria em Bogotá — o refino agora é dentro de casa.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "probe",
+  "text": "Andina Prime sonda Escondida (Norte do Chile) e encontra um depósito RICO.",
+  "company": "Andina Prime",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 4,
+  "kind": "mine",
+  "text": "Vetor Sul abre sua mina em Escondida (Norte do Chile).",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "mai/2027"
+ },
+ {
+  "tick": 5,
+  "kind": "facility",
+  "text": "PetroPlata inaugura sua refinaria em Buenos Aires — o refino agora é dentro de casa.",
+  "company": "PetroPlata",
+  "data": {},
+  "date": "jun/2027"
+ },
+ {
+  "tick": 5,
+  "kind": "facility",
+  "text": "Órbita Systems ergue uma fábrica de componentes em Santiago.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "jun/2027"
+ },
+ {
+  "tick": 5,
+  "kind": "chain_link",
+  "text": "MARCO DA CADEIA: Órbita Systems é a primeira a dominar o elo de componentes.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "jun/2027"
+ },
+ {
+  "tick": 5,
+  "kind": "facility",
+  "text": "Cuprum Andes ergue uma fábrica de componentes em Lima.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "jun/2027"
+ },
+ {
+  "tick": 5,
+  "kind": "probe",
+  "text": "Nexo Indústrias sonda Carajás e encontra um depósito RICO.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "jun/2027"
+ },
+ {
+  "tick": 5,
+  "kind": "facility",
+  "text": "Vetor Sul inaugura sua refinaria em Porto Alegre — o refino agora é dentro de casa.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "jun/2027"
+ },
+ {
+  "tick": 6,
+  "kind": "mine",
+  "text": "Ferra Brasil abre sua mina em Quadrilátero Ferrífero.",
+  "company": "Ferra Brasil",
+  "data": {},
+  "date": "jul/2027"
+ },
+ {
+  "tick": 6,
+  "kind": "probe",
+  "text": "Lítio Austral sonda Carajás e encontra um depósito RICO.",
+  "company": "Lítio Austral",
+  "data": {},
+  "date": "jul/2027"
+ },
+ {
+  "tick": 6,
+  "kind": "mine",
+  "text": "Nexo Indústrias abre sua mina em Carajás.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "jul/2027"
+ },
+ {
+  "tick": 6,
+  "kind": "facility",
+  "text": "Vetor Sul ergue uma fábrica de componentes em Porto Alegre.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "jul/2027"
+ },
+ {
+  "tick": 7,
+  "kind": "facility",
+  "text": "Nexo Indústrias ergue uma fábrica de componentes em Bogotá.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "ago/2027"
+ },
+ {
+  "tick": 8,
+  "kind": "facility",
+  "text": "Ferra Brasil inaugura sua refinaria em São Paulo — o refino agora é dentro de casa.",
+  "company": "Ferra Brasil",
+  "data": {},
+  "date": "set/2027"
+ },
+ {
+  "tick": 8,
+  "kind": "facility",
+  "text": "Órbita Systems abre sua planta de dispositivos — a cadeia sobe mais um elo.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "set/2027"
+ },
+ {
+  "tick": 8,
+  "kind": "chain_link",
+  "text": "MARCO DA CADEIA: Órbita Systems é a primeira a dominar o elo de dispositivos.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "set/2027"
+ },
+ {
+  "tick": 8,
+  "kind": "tool",
+  "text": "Órbita Systems dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "set/2027"
+ },
+ {
+  "tick": 8,
+  "kind": "facility",
+  "text": "Cuprum Andes abre sua planta de dispositivos — a cadeia sobe mais um elo.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "set/2027"
+ },
+ {
+  "tick": 8,
+  "kind": "facility",
+  "text": "Vetor Sul abre sua planta de dispositivos — a cadeia sobe mais um elo.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "set/2027"
+ },
+ {
+  "tick": 9,
+  "kind": "tool",
+  "text": "Cuprum Andes dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "out/2027"
+ },
+ {
+  "tick": 9,
+  "kind": "facility",
+  "text": "Nexo Indústrias abre sua planta de dispositivos — a cadeia sobe mais um elo.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "out/2027"
+ },
+ {
+  "tick": 10,
+  "kind": "tool",
+  "text": "Vetor Sul dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "nov/2027"
+ },
+ {
+  "tick": 11,
+  "kind": "tool",
+  "text": "Nexo Indústrias dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "dez/2027"
+ },
+ {
+  "tick": 15,
+  "kind": "tool",
+  "text": "Órbita Systems dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "abr/2028"
+ },
+ {
+  "tick": 15,
+  "kind": "tool",
+  "text": "Cuprum Andes dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "abr/2028"
+ },
+ {
+  "tick": 17,
+  "kind": "tool",
+  "text": "Nexo Indústrias dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Nexo Indústrias",
+  "data": {},
+  "date": "jun/2028"
+ },
+ {
+  "tick": 18,
+  "kind": "tool",
+  "text": "Vetor Sul dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Vetor Sul",
+  "data": {},
+  "date": "jul/2028"
+ },
+ {
+  "tick": 21,
+  "kind": "tool",
+  "text": "Órbita Systems dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Órbita Systems",
+  "data": {},
+  "date": "out/2028"
+ },
+ {
+  "tick": 23,
+  "kind": "tool",
+  "text": "Cuprum Andes dispara uma campanha no InstaSim (US$ 3,600) para empurrar seus dispositivos.",
+  "company": "Cuprum Andes",
+  "data": {},
+  "date": "dez/2028"
+ },
+ {
+  "tick": 24,
+  "kind": "end",
+  "text": "FIM DO PERÍODO: Vetor Sul lidera em caixa (US$ 50.3M); Órbita Systems foi quem mais subiu na cadeia (elo 4); supercomputadores entregues: 0; empresas vivas: 8/8.",
+  "company": null,
+  "data": {},
+  "date": "jan/2029"
+ }
+]
