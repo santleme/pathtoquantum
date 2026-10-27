@@ -18,10 +18,16 @@ módulo é a fronteira segura entre esse código e o motor:
   atribuição/deleção de atributo em qualquer outro objeto, deleção
   em geral e subscrito fora dos donos legítimos (revisão do PR #7).
 
-  Limite declarado: AST não enxerga tipo — ler ``deposit.grade``
-  fora de ``comp.knowledge`` continua possível em tese. A correção
-  estrutural é a camada de Observation (gap registrado em
-  docs/ALGORITMOS-DECISAO.md), guarda v2.
+  Limite da v1 — FECHADO pela guarda v2: a AST não enxerga tipo, e
+  ler ``deposit.grade`` fora de ``comp.knowledge`` era possível
+  porque a política recebia os objetos vivos do motor. A correção
+  estrutural é a camada de Observation (docs/OBSERVATION-SPEC.md):
+  a política-programa só recebe a ``Observation`` — ``DepositView``
+  não tem ``grade``/``size_t``, não há lista de empresas nem eventos
+  futuros na superfície, e os internos das views vivem sob nomes
+  *name-mangled* que a regra nova desta guarda rejeita no fonte
+  (atributo com ``__``). O loader ainda exige a assinatura do
+  contrato novo, ``decide(self, obs)``.
 
 - ``load_program_policy``: valida, carrega o módulo de um arquivo e
   devolve a instância, com ``program_hash``/``pid`` para a Crônica
@@ -32,6 +38,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib.util
+import inspect
 import itertools
 from pathlib import Path
 
@@ -232,6 +239,13 @@ def validate_program(source: str) -> list[str]:
             if node.attr.startswith("__") and node.attr.endswith("__") \
                     and node.attr != "__init__":
                 violations.append(f"atributo dunder proibido: {node.attr}")
+            elif "__" in node.attr and node.attr != "__init__":
+                # Guarda v2: nome com "__" fora do padrão dunder é
+                # interno name-mangled das views da Observation
+                # (_Actuator__engine, _CompanyView__comp, ...) — a
+                # fronteira não se atravessa pelo nome cru.
+                violations.append(
+                    f"atributo privado proibido: {node.attr}")
         elif isinstance(node, ast.Name):
             if node.id.startswith("__"):
                 violations.append(f"nome dunder proibido: {node.id}")
@@ -274,6 +288,16 @@ def load_program_policy(path) -> Policy:
             raise ValueError(
                 f"{path}: o programa precisa definir "
                 "EvolvedPolicy(HeuristicPolicy)")
+        # Guarda v2: o contrato é decide(self, obs) — a política
+        # recebe SÓ a Observation, nunca (engine, comp).
+        try:
+            inspect.signature(cls.decide).bind(None, None)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{path}: EvolvedPolicy.decide precisa aceitar "
+                f"(self, obs) — a Observation é a única entrada da "
+                f"política (guarda v2, docs/OBSERVATION-SPEC.md): "
+                f"{exc}") from exc
         _class_cache[h] = cls
     policy = cls()
     policy.program_hash = h
