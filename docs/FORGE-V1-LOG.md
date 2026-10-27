@@ -125,8 +125,11 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   `mundo` de outro checkout e um teste falha na allowlist — artefato
   de ambiente, não da corrida: nesta branch `mundo.intentions` está
   permitido e semente/filho passam na guarda.
-- **Relançamento**: bundle novo `pascalcoimbra/mundo-autonomo-src13`
-  (mesmo mecanismo: ZIP `mundo-src.zip` com src/ + forge/ +
+- **Relançamento**: bundle novo `pascalcoimbra/mundo-autonomo-src-13`
+  (slug real gerado pelo Kaggle a partir do título "Mundo Autonomo
+  Src 13"; criado pela interface web em 27/10/2026 às 13:27:55 -03,
+  privado, 35 arquivos, porque a API respondeu 401 nesta sessão.
+  Mesmo mecanismo: ZIP `mundo-src.zip` com src/ + forge/ +
   pyproject.toml) e nova versão do mesmo kernel
   `pascalcoimbra/ptq-forge-v1` com o metadata
   `notebooks/kernel-metadata-forge-v1-src13.json`. Protocolo
