@@ -67,9 +67,13 @@ def build_policy(spec: PolicySpec) -> Policy:
     if spec.kind == "mutant":
         return GenomePolicy(mutate(GENOME0, spec.seed, spec.sigma))
     if spec.kind == "program":
+        if not spec.program_hash:
+            raise ValueError(
+                "spec de programa sem hash: use PolicySpec.program() "
+                "(o hash é a identidade do candidato)")
         from .program import load_program_policy
         policy = load_program_policy(spec.program_path)
-        if spec.program_hash and policy.program_hash != spec.program_hash:
+        if policy.program_hash != spec.program_hash:
             raise ValueError(
                 f"programa mudou desde a spec: hash {policy.program_hash} "
                 f"!= {spec.program_hash}")

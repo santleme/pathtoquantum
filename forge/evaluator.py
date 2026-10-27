@@ -39,6 +39,22 @@ except ImportError:  # testes locais sem a dependência: métricas puras
 SALIENT = {"mine", "facility", "supercomputer", "bankruptcy", "probe"}
 
 
+def _zero(reason: str):
+    metrics = {"combined_score": 0.0, "S": 0.0, "stage_mean": 0.0,
+               "super_mean": 0.0, "facilities_mean": 0.0,
+               "alive_rate": 0.0, "tool_rate": 0.0, "valid": 0.0}
+    return metrics, {"evaluation_error": reason}
+
+
+def _focal_events(res, focal_cid: int, kind: str) -> int:
+    names = {c["cid"]: c["name"] for c in res["companies"]}
+    chron = res["chronicle"]
+    events = chron["events"] if isinstance(chron, dict) else chron
+    return sum(1 for e in events if isinstance(e, dict)
+               and e.get("company") == names[focal_cid]
+               and e.get("kind") == kind)
+
+
 def _n(env: str, default: int) -> int:
     return int(os.environ.get(env, str(default)))
 
@@ -73,9 +89,7 @@ def _evaluate(program_path, stage: int):
     source = Path(program_path).read_text(encoding="utf-8")
     violations = validate_program(source)
     if violations:
-        metrics = {"combined_score": 0.0, "S": 0.0, "stage_mean": 0.0,
-                   "super_mean": 0.0, "facilities_mean": 0.0,
-                   "alive_rate": 0.0, "valid": 0.0}
+        metrics, _ = _zero("guarda")
         artifacts = {"guard_violations":
                      "Programa REJEITADO pela guarda anti-trapaça:\n- "
                      + "\n- ".join(violations)}
@@ -93,12 +107,21 @@ def _evaluate(program_path, stage: int):
             god_events=T.TEST_SHOCKS if shocks else None,
             policy_specs=T.field_specs(None, field, focal_cid, i, seed,
                                        focal_spec=spec)))
-    results = run_episodes(specs, processes=1)
-    rows = []
-    for res, (seed, field, _), focal_cid in zip(results, blocks, focals):
-        row = T.block_score(res, focal_cid)
-        row.update({"seed": seed, "field": field, "focal_cid": focal_cid})
-        rows.append(row)
+    try:
+        results = run_episodes(specs, processes=1)
+        rows = []
+        for res, (seed, field, _), focal_cid in zip(results, blocks,
+                                                    focals):
+            row = T.block_score(res, focal_cid)
+            row.update({"seed": seed, "field": field,
+                        "focal_cid": focal_cid,
+                        "tools": _focal_events(res, focal_cid, "tool")})
+            rows.append(row)
+    except Exception as exc:  # candidato quebrou: fitness 0 + o porquê
+        import traceback
+        return _zero("O programa quebrou durante a avaliação — corrija "
+                     "e tente de novo:\n"
+                     + "".join(traceback.format_exception(exc))[-1500:])
     n = len(rows)
     metrics = {
         "combined_score": sum(r["S"] for r in rows) / n,
@@ -107,6 +130,7 @@ def _evaluate(program_path, stage: int):
         "super_mean": sum(r["super"] for r in rows) / n,
         "facilities_mean": sum(r["facilities"] for r in rows) / n,
         "alive_rate": sum(1.0 for r in rows if r["alive"]) / n,
+        "tool_rate": sum(r["tools"] for r in rows) / n,
         "valid": 1.0,
     }
     lines = [f"programa prog:{program_hash(source)} | estágio {stage} | "
