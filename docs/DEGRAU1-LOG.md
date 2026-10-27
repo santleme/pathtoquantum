@@ -548,3 +548,50 @@ seeds 42/7/11/23, 120 ticks.
 - **Pendências declaradas:** políticas plugáveis arbitrárias seguem
   só no motor Python (por desenho — o torneio/forja usam o Engine de
   referência); Fase 6 (JAX) continua condicional a gargalo medido.
+
+## Fase 5 — veredito v2 REPROVADO (7/11), diagnóstico e correção; v3 APROVADO 11/11 (27/10/2026)
+
+- **Veredito v2 (bundle src9): REPROVADO/AJUSTAR — paridade 7/11.**
+  Divergentes: `vivo n=8 t=120`, `vivo n=1000 t=24`, `vivo+force
+  t=48` e `restore cruzado vivo`. Benchmarks (informativos): 9,9× a
+  n=100 e 11,4× a n=1.000. Localmente a suíte seguia verde nas
+  mesmas configurações — divergência só no ambiente Kaggle.
+- **Diagnóstico instrumentado** (kernel `ptq-diag-fase-5-paridade`,
+  outputs em `results/diag-fase5/`): (1) micro-sondas de semântica —
+  sequências de `random()`/`gauss`/`normalvariate`/`lognormvariate`/
+  `uniform`/`choice` e valores de `math` (exp/log/pow/cos/sin)
+  idênticos entre o CPython 3.12.3 local e o 3.13.15 do Kaggle:
+  **a semântica do `random` NÃO mudou** e a libm bate; (2) diff tick
+  a tick com resumo do stream MT19937: streams idênticos (índice,
+  palavras e `gauss_next` iguais); (3) diff tipado nos estados
+  finais das 11 configurações + restores: **zero divergência de
+  valor** (hash normalizado bate em 100%, `result()` idêntico em
+  tudo) e **exatamente um campo divergente, só de tipo**:
+  `state.remaining.Chuquicamata` — `int` no Python, `float` no
+  nativo.
+- **Causa raiz (duas camadas):** no motor Python, `remaining` nasce
+  `int` (o `size_t` da fonte) e só vira `float` na primeira
+  extração (a subtração só executa com `crude > 0`, nos dois
+  motores); o núcleo guarda `double` e emitia `float` sempre, e o
+  `_restore_int_types` do wrapper — que já normalizava depósitos e
+  `knowledge` — não cobria o `remaining`. A suíte local não via
+  porque o mundo local (`data/world_data.json`, 13 depósitos)
+  extrai o Chuquicamata nas configurações testadas; no Kaggle o
+  bundle não leva `data/`, o mundo é o **builtin** (10 depósitos)
+  e nele o Chuquicamata nunca é extraído sob a dinâmica do mundo
+  vivo. Reproduzido localmente com `world_data=False`.
+- **Correção:** `_restore_int_types` normaliza `remaining` pelo
+  mesmo critério dos demais campos (`size_t` declarada int na fonte
+  + valor == `size_t` ⟺ depósito intacto — regra exata, pois
+  `remaining` é monótono e a subtração exige `crude > 0`). O portão
+  não foi afrouxado: paridade bit-idêntica segue sendo a exigência.
+  Regressão: paridade vivo builtin (120t), force builtin, restore
+  cruzado vivo builtin e tipo do `remaining` — **suíte 196/196**.
+  Commit `782bc1b`; bundle novo **src10** (verificado por download,
+  md5 idêntico ao repo).
+- **Veredito v3 (bundle src10): APROVADO — paridade 11/11 corridas
+  bit-idênticas** (clássico, vivo em n=8/100/1.000, seeds 7/123,
+  eventos de Deus, force_events, restore cruzado nos dois sentidos).
+  Benchmarks no Kaggle: **13,3× a n=100** (259,8 × 3.443,5 ticks/s)
+  e **8,6× a n=1.000** (35,1 × 303,5 ticks/s). Outputs em
+  `results/veredito-fase5/`. **Fase 5 encerrada; Degrau 1 completo.**
