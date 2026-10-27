@@ -137,6 +137,10 @@ def test_guard_rejects_cheats(needle, code):
 
 
 def test_guard_allows_legal_channels():
+    # Fatia 4: os subscritos comp._offers/_buys/knowledge e
+    # engine.claimed_by saíram daqui — viraram canais aposentados
+    # (test_guard_rejects_retired_v1_channels). Restam legais:
+    # atributo em self, comp.tools.* e subscrito em objeto próprio.
     code = (
         "from mundo.engine import HeuristicPolicy\n"
         "class EvolvedPolicy(HeuristicPolicy):\n"
@@ -144,15 +148,53 @@ def test_guard_allows_legal_channels():
         "        super().__init__()\n"
         "        self.extra = 1\n"
         "    def decide(self, engine, comp):\n"
-        "        comp._offers['copper'] = 3\n"
-        "        comp._buys['copper'] = 1\n"
-        "        comp.knowledge['X'] = {'grade': 1}\n"
-        "        engine.claimed_by[(0, 0)] = comp.cid\n"
         "        tools = comp.tools\n"
         "        tools.insta_until = 9\n"
         "        own = {}\n"
         "        own['a'] = 1\n")
     assert validate_program(code) == []
+
+
+RETIRED_CHANNELS = [
+    ("_offers",
+     "def f(comp):\n    comp._offers['copper'] = 3\n"),
+    ("_buys",
+     "def f(comp):\n    comp._buys['copper'] = 1\n"),
+    ("knowledge",
+     "def f(comp):\n    comp.knowledge['X'] = (0.5, 10)\n"),
+    ("claimed_by",
+     "def f(engine, comp):\n    engine.claimed_by[(0, 0)] = comp.cid\n"),
+    ("_buys",  # via apelido contaminado de comp
+     "def f(comp):\n    c = comp\n    c._buys['copper'] = 1\n"),
+    ("claimed_by",  # deleção também é escrita no canal
+     "def f(engine):\n    del engine.claimed_by[(0, 0)]\n"),
+]
+
+
+@pytest.mark.parametrize("attr,code", RETIRED_CHANNELS,
+                         ids=["comp._offers", "comp._buys",
+                              "comp.knowledge", "engine.claimed_by",
+                              "alias._buys", "del claimed_by"])
+def test_guard_rejects_retired_v1_channels(attr, code):
+    """Fatia 4 da guarda v2: cada canal de escrita da v1 é rejeitado
+    com a mensagem que aponta o contrato atual (decide(self, obs)
+    devolvendo intenções de mundo.intentions)."""
+    violations = validate_program(code)
+    assert any(attr in v and "canal v1 aposentado" in v
+               and "mundo.intentions" in v for v in violations), \
+        violations
+
+
+def test_guard_rejects_retired_channel_at_load(tmp_path):
+    p = tmp_path / "legacy.py"
+    p.write_text(
+        "from mundo.engine import HeuristicPolicy\n"
+        "class EvolvedPolicy(HeuristicPolicy):\n"
+        "    def decide(self, obs):\n"
+        "        comp._offers['copper'] = 3\n"
+        "        return []\n")
+    with pytest.raises(ProgramRejected, match="canal v1 aposentado"):
+        load_program_policy(p)
 
 
 def test_guard_rejects_at_load(tmp_path):

@@ -724,7 +724,7 @@ class Engine:
     # -- caches de consulta (performance) ---------------------------------
     def _rebuild_caches(self) -> None:
         """Índices nome->objeto: eliminam varreduras lineares por tick
-        em _produce/_pick_deposit/_build_downstream. Depósitos novos
+        em _produce e nas fases da política. Depósitos novos
         (evento de Deus) entram no índice em _apply_god_events."""
         self._deposit_by_name = {d.name: d for d in self.deposits}
         self._city_by_name = {c.name: c for c in self.cities}
@@ -801,16 +801,22 @@ class Engine:
         f = self.demand_factors.get(commodity)
         return f[0] if f and self.tick <= f[1] else 1.0
 
-    # -- decisões ---------------------------------------------------------
     # -- decisões (delegadas à política plugável) -------------------------
-    # Os métodos _decide/_reserve/... permanecem como fachada de
-    # compatibilidade: constroem a Observation da empresa e delegam
-    # para a política instalada (por padrão a HeuristicPolicy). A
-    # política nunca recebe o motor nem a empresa crua (guarda v2,
-    # docs/OBSERVATION-SPEC.md) e, desde a fatia 3, não executa
-    # nada: decide devolve intenções declarativas e quem as aplica
-    # é _apply_intentions, com validação total antes da execução.
-    # Trocar a política não toca o motor.
+    # _decide é a entrada da decisão: constrói a Observation da
+    # empresa e delega para a política instalada (por padrão a
+    # HeuristicPolicy). A política nunca recebe o motor nem a
+    # empresa crua (guarda v2, docs/OBSERVATION-SPEC.md) e, desde a
+    # fatia 3, não executa nada: decide devolve intenções
+    # declarativas e quem as aplica é _apply_intentions, com
+    # validação total antes da execução. Trocar a política não
+    # toca o motor.
+    # Fatia 4: as fachadas de fase da era v1 (_pick_deposit,
+    # _build_downstream, _plan_buys, _buffer, _plan_sells) foram
+    # APOSENTADAS — grep provou zero chamadores no repo (as fases
+    # vivem na política e são orquestradas pelo decide). _reserve e
+    # _use_tools permanecem como exceções registradas no
+    # OBSERVATION-LOG: são a superfície de fase que os testes de
+    # equipamentos/ferramentas exercitam direto.
     def _reserve(self, comp: Company) -> float:
         return self.policy.reserve(build_company_view(self, comp))
 
@@ -821,28 +827,6 @@ class Engine:
             return
         obs = build_observation(self, comp, sealed_act=True)
         self._apply_intentions(comp, self.policy.decide(obs))
-
-    def _pick_deposit(self, comp: Company):
-        return self.policy.pick_deposit(
-            build_observation(self, comp, sealed_act=True))
-
-    def _build_downstream(self, comp: Company, spendable: float) -> bool:
-        obs = build_observation(self, comp, sealed_act=True)
-        built, intentions = self.policy.build_downstream(obs, spendable)
-        self._apply_intentions(comp, intentions)
-        return built
-
-    def _plan_buys(self, comp: Company) -> None:
-        obs = build_observation(self, comp, sealed_act=True)
-        self._apply_intentions(comp, self.policy.plan_buys(obs))
-
-    def _buffer(self, comp: Company, commodity: str) -> float:
-        return self.policy.buffer(build_company_view(self, comp),
-                                  commodity)
-
-    def _plan_sells(self, comp: Company) -> None:
-        obs = build_observation(self, comp, sealed_act=True)
-        self._apply_intentions(comp, self.policy.plan_sells(obs))
 
     def _use_tools(self, comp: Company) -> None:
         obs = build_observation(self, comp, sealed_act=True)

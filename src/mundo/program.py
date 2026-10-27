@@ -11,12 +11,18 @@ módulo é a fronteira segura entre esse código e o motor:
   torneio/driver/carregador), nada de eval/open/getattr, nada de
   ``engine.rng`` direto (a política não consome nem manipula o fluxo
   de aleatoriedade do motor), nada de ``engine.companies`` (estado
-  das rivais). Escrita no mundo só pelos canais legítimos: métodos
-  do motor, subscritos ``comp._offers/_buys/knowledge`` e
-  ``engine.claimed_by``, atributos ``comp.tools.*`` — a guarda
-  rastreia apelidos de ``engine``/``comp`` (taint) e rejeita
-  atribuição/deleção de atributo em qualquer outro objeto, deleção
-  em geral e subscrito fora dos donos legítimos (revisão do PR #7).
+  das rivais). Escrita no mundo, para o programa, não existe: a
+  decisão é declarativa (intenções de ``mundo.intentions``). Os
+  canais de escrita da v1 — subscritos ``comp._offers/_buys/
+  knowledge`` e ``engine.claimed_by`` — foram APOSENTADOS na
+  fatia 4 da guarda v2: programa que os usa é rejeitado com
+  mensagem apontando o contrato atual. Resta a tolerância
+  histórica de atributos ``comp.tools.*`` (inalcançável na
+  prática: o programa só recebe a Observation). A guarda rastreia
+  apelidos de ``engine``/``comp`` (taint) e rejeita
+  atribuição/deleção de atributo em qualquer outro objeto,
+  deleção em geral e qualquer subscrito em objeto do mundo
+  (revisão do PR #7).
 
   Limite da v1 — FECHADO pela guarda v2: a AST não enxerga tipo, e
   ler ``deposit.grade`` fora de ``comp.knowledge`` era possível
@@ -62,12 +68,17 @@ ALLOWED_IMPORT_MODULES = {"mundo", "mundo.chain", "mundo.engine",
 # Para ``from mundo import X``: só os submódulos públicos acima.
 MUNDO_PACKAGE_NAMES = {"chain", "engine", "companies", "intentions"}
 
-# Donos legais de escrita por subscrito, como (origem, primeiro
-# atributo): as intenções da empresa, o conhecimento dela e o
-# registro de claims que o próprio ``decide`` da v0 mantém via motor.
-LEGAL_SUBSCRIPT_OWNERS = {("comp", "_offers"), ("comp", "_buys"),
-                          ("comp", "knowledge"),
-                          ("engine", "claimed_by")}
+# Canais v1 de escrita por subscrito, como (origem, primeiro
+# atributo) — APOSENTADOS na fatia 4 da guarda v2. Na era v0/v1 a
+# política recebia (engine, comp) e escrevia direto nestes
+# subscritos; desde a Observation (fatia 1) e as Intentions
+# declarativas (fatia 3) nenhum programa vivo os usa (a semente da
+# geração 0 é declarativa), e a guarda os rejeita nomeando o
+# contrato atual: ordens viram intenções Buy/Offer, sondagem e
+# conhecimento viram Probe, claims viram RegisterClaim.
+RETIRED_SUBSCRIPT_OWNERS = {("comp", "_offers"), ("comp", "_buys"),
+                            ("comp", "knowledge"),
+                            ("engine", "claimed_by")}
 
 BANNED_CALLS = {
     "eval", "exec", "open", "__import__", "getattr", "setattr",
@@ -203,12 +214,22 @@ def _check_write_target(target, taint, violations, how: str) -> None:
         root = node.id if isinstance(node, ast.Name) else None
         attrs.reverse()
         origin = taint.get(root) if root else None
-        if origin is not None and not (
-                attrs and (origin, attrs[0]) in LEGAL_SUBSCRIPT_OWNERS):
+        if origin is not None:
             dotted = ".".join([root or "?"] + attrs)
-            violations.append(
-                f"{how} em subscrito proibida: {dotted}[...] (donos "
-                "legais: comp._offers/_buys/knowledge, engine.claimed_by)")
+            if attrs and (origin, attrs[0]) in RETIRED_SUBSCRIPT_OWNERS:
+                violations.append(
+                    f"{how} em subscrito proibida: {dotted}[...] — "
+                    "canal v1 aposentado (guarda v2, fatia 4): a "
+                    "decisão é declarativa; devolva intenções de "
+                    "mundo.intentions em decide(self, obs) — Buy/"
+                    "Offer para ordens, Probe para sondagem e "
+                    "conhecimento, RegisterClaim para claims")
+            else:
+                violations.append(
+                    f"{how} em subscrito proibida: {dotted}[...] "
+                    "(programas não escrevem em subscritos do mundo: "
+                    "a decisão devolve intenções — mundo.intentions "
+                    "— em decide(self, obs))")
 
 
 def validate_program(source: str) -> list[str]:

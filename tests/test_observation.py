@@ -490,3 +490,21 @@ def test_market_series_empty_without_market_v2():
     snap = obs.to_snapshot()
     assert snap["world"]["anchors"] == {}
     assert snap["world"]["price_history"] == {}
+
+
+# --------------------------------------------------------------------- #
+# Fatia 4 — a superfície v1 do Engine aposentada
+# --------------------------------------------------------------------- #
+def test_engine_legacy_facades_retired():
+    """As fachadas de fase da era v1 (_pick_deposit/_build_downstream/
+    _plan_buys/_buffer/_plan_sells) tinham zero chamadores no repo —
+    as fases vivem na política e quem as orquestra é o decide — e
+    foram removidas do Engine. Permanecem a entrada da decisão
+    (_decide, chamada pelo passo do motor) e as exceções registradas
+    no OBSERVATION-LOG (_reserve/_use_tools, superfície de fase que
+    os testes de equipamentos/ferramentas exercitam direto)."""
+    for name in ("_pick_deposit", "_build_downstream", "_plan_buys",
+                 "_buffer", "_plan_sells"):
+        assert not hasattr(Engine, name), name
+    for name in ("_decide", "_reserve", "_use_tools"):
+        assert hasattr(Engine, name), name
