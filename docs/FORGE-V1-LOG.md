@@ -200,3 +200,52 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   cascata, avaliação cega nas seeds 9901–9932 e a mesma régua de
   veredito. Relançamento = bundle novo + nova versão do kernel,
   pendente só do cadastro do secret `NVIDIA_API_KEY`.
+
+## Version 8 (27/10/2026, bundle src14) — REPROVADO/AJUSTAR, teste faminto (inválido como teste completo)
+
+- Lançada 14:04:29 -03 (Save & Run All, diff +0 −0, fonte única
+  `pascalcoimbra/mundo-autonomo-src14`), concluída `complete` em
+  18.546s de log (~5h09), artefatos em `results/forge-v1-v8/`.
+- **Veredito impresso: FORGE-V1: REPROVADO/AJUSTAR.** Campeão
+  `prog:038395fa93a1` (iteração 004, diff via Gemini "Lower the
+  initial cash reserve and mine…"), S1=0,4797, S2=0,5175.
+  Avaliação cega (64 blocos, seeds 9901–9932): S médio forja
+  0,5261 × semente 0,5063 × torneio 0,5813; ΔS vs torneio
+  **−0,0553** IC95 [−0,0998, −0,0112]; ΔS vs semente **+0,0197**
+  IC95 [−0,0046, +0,0456] (cruza zero: sinal indistinguível de
+  ruído); F2 −0,0328, choques −0,0328.
+- **Causa raiz (a terceira falha de infraestrutura, agora
+  diagnosticada por completo):** contagens {accepted: 4,
+  rejected_llm: 295, rejected_guard: 0, error: 1, duplicate: 0};
+  mutador: 1.187 fallbacks, 295 failures.
+  - **NVIDIA: HTTP 404 nas 300 chamadas.** O ID
+    `qwen/qwen3-coder-480b-a35b-instruct` não existe no catálogo
+    hospedado do NIM sob esse nome. A chave estava presente e foi
+    usada (a rota foi chamada; 404 = modelo não encontrado, não
+    autenticação). A pesquisa prévia havia sinalizado que o ID
+    precisava de confirmação no catálogo vivo/sonda antes do
+    lançamento — o lançamento saiu sem essa sonda. Erro de
+    processo registrado.
+  - **Gemini: HTTP 429 quase o tempo todo.** As 4 aceitas saíram
+    todas via Gemini (3× flash-preview, 1× 3.5-flash) nas
+    iterações 003–011, nos primeiros ~16 min. Leitura: a cota
+    diária gratuita já vinha queimada pelas corridas V6 (13:01)
+    e V7 (13:32) do mesmo dia — sobraram poucas chamadas e elas
+    acabaram na iteração ~012; dali em diante, 429 contínuo.
+  - **Groq: chamado 295× por modelo como reserva, sem nenhuma
+    mutação salva** — a cadeia inteira falhou em 295/300.
+- **Classificação:** NÃO é teste da hipótese de 300 iterações —
+  a evolução morreu de fome na iteração 011 e as 289 restantes
+  foram só falhas de rota com backoff (~55–60s cada). O campeão
+  de 4 mutações ao menos empatou com a semente na cega (ΔS
+  +0,0197 com IC cruzando zero). Hipótese segue ABERTA.
+- **Correções antes de qualquer relançamento** (auditoria,
+  cenário (e)): (1) confirmar o ID exato do modelo no catálogo
+  vivo do NIM ou trocar pela oferta confirmada da referência
+  oficial (deepseek-v4-pro/flash, gpt-oss-120b via NVIDIA);
+  (2) sonda de 1 chamada por rota ANTES da corrida (kernel de
+  fumaça), nunca mais lançar 300 iterações sem provar as rotas;
+  (3) não rodar duas corridas no mesmo dia sobre as mesmas cotas
+  diárias gratuitas; (4) usar a build instrumentada
+  (`forja/instrumentacao-tempo`) para o log já nascer com tempos
+  por fase e por rota.
