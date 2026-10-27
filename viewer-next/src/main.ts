@@ -43,11 +43,12 @@ async function fetchJson(url: string): Promise<unknown> {
 async function loadAll(): Promise<void> {
   const runDir = resolveRunDir(location.search);
   const framesUrl = runDir ? `${runDir}/frames.json` : 'data/served/frames.json';
-  const [framesRaw, worldRaw, saTopo, worldTopo] = await Promise.all([
+  // Abertura = excerto SA 50m; o mundo land-110m (geo/world-110m.json) entra na
+  // vista-múndi das lentes futuras — não é baixado nesta fatia.
+  const [framesRaw, worldRaw, saTopo] = await Promise.all([
     fetchJson(framesUrl),
     fetchJson('data/world_data.json'),
     fetchJson('geo/sa-50m.json'),
-    fetchJson('geo/world-110m.json'),
   ]);
   run = parseRunData(framesRaw);
   world = parseWorldData(worldRaw);
@@ -57,7 +58,6 @@ async function loadAll(): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (saTopo as any).objects.countries,
   ) as unknown as FeatureCollection;
-  void worldTopo; // mundo 110m é carregado/valido no build; a base detalhada é o excerto SA 50m
   surface = new CanvasMapSurface(sa);
   const scrub = $('scrub') as HTMLInputElement;
   scrub.max = String(run.frames.length - 1);
