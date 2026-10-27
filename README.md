@@ -176,7 +176,7 @@ Cinco invariantes seguram o sistema inteiro (detalhe em [`docs/ARQUITETURA.md`](
 Do plano de versões do PRD (§10), com o já-entregue marcado — não prometido de novo:
 
 - ✅ **v0 Nascimento** — motor, mundo embutido, crônica, viewer, primeira história.
-- ✅ **v1 Mundo maior e vivo** — mundo real 13/11, mercado vivo, equipamentos, países, VidSim/LojaSim, crônica rica, replay completo no viewer.
+- 🚧 **v1 Mundo maior e vivo — parcial (núcleo entregue)** — recorte América do Sul com mundo real 13/11 e mundo vivo (mercado, equipamentos, países), VidSim/LojaSim, crônica rica e replay no viewer (scrub, `?run=`, comparador) entregues. Continua aberto do v1 do PRD (§10): novos recortes (América do Norte — #11, África, Ásia) e a câmera nos marcos da crônica, que ainda não existe.
 - 🚧 **v2 Temporadas de políticas** — torneio CMA-ES lançado; forja evolutiva em corrida (#6); políticas aprendidas disputando temporadas.
 - 📐 **v3 Outros deuses e Era 2** — editor de mundos, ligas entre mundos e os elos finais até o computador quântico (épica #17).
 
