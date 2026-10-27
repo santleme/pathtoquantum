@@ -19,11 +19,11 @@ function makeCtxStub() {
   });
 }
 
-async function runCase(search) {
+async function runCase(search, fetchData) {
   const els = {};
   for (const id of ['date', 'runlabel', 'play', 'speed', 'scrub', 'file',
-                    'map', 'board', 'feed']) {
-    els[id] = { value: '700', textContent: '', innerHTML: '',
+                    'map', 'board', 'feed', 'compare', 'comparetitle']) {
+    els[id] = { value: '700', textContent: '', innerHTML: '', style: {},
                 clientWidth: 800, clientHeight: 600,
                 getContext: () => makeCtxStub() };
   }
@@ -37,13 +37,13 @@ async function runCase(search) {
     document: { getElementById: id => els[id] },
     fetch: async url => {
       fetchCalls.push(url);
-      return { json: async () => data };
+      return { json: async () => (fetchData ? fetchData(url) : data) };
     },
   };
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox);
-  // Deixa o fetch inicial + load() resolverem.
-  for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r));
+  // Deixa o fetch inicial + load() + (se houver) o fetch da comparação resolverem.
+  for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
   return { sandbox, els, fetchCalls };
 }
 
@@ -93,5 +93,29 @@ function check(name, cond, extra = '') {
         fetchCalls[0] === 'frames.json', fetchCalls);
 }
 
-if (failures) { console.log(`${failures} falha(s)`); process.exit(1); }
+// Caso 4 (fatia 2): ?compare= busca a segunda corrida e compara o frame
+// final — empresa por empresa, com delta. A segunda corrida aqui é a
+// mesma, com o caixa da 1ª empresa do frame final dobrado.
+{
+  const last = data.frames[data.frames.length - 1];
+  const cash0 = last.companies[0].cash;
+  const doubled = JSON.parse(JSON.stringify(data));
+  doubled.frames[doubled.frames.length - 1].companies[0].cash = cash0 * 2;
+  const { els, fetchCalls } = await runCase(
+    '?run=results/nascimento-v0&compare=results/segunda',
+    url => (url.includes('segunda') ? doubled : data));
+  check('?compare busca a segunda corrida',
+        fetchCalls[1] === 'results/segunda/frames.json', fetchCalls);
+  check('?compare mostra o título da comparação',
+        els.comparetitle.style.display === '', els.comparetitle.style.display);
+  check('?compare lista a empresa comparada',
+        els.compare.innerHTML.includes(last.companies[0].name), '(sem empresa)');
+  const delta = '+US$ ' + (cash0 / 1e6).toFixed(1) + 'M';
+  check('?compare mostra o delta do caixa dobrado',
+        els.compare.innerHTML.includes(delta), els.compare.innerHTML.slice(0, 200));
+  // Trava anti-'..' também vale para ?compare.
+  const trav = await runCase('?run=results/nascimento-v0&compare=../segredo');
+  check('?compare com .. não busca fora do viewer',
+        trav.fetchCalls.length === 1, trav.fetchCalls);
+}
 console.log('viewer/test_replay: OK');

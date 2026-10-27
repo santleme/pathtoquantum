@@ -55,6 +55,8 @@
   <aside>
     <h2>Placar das empresas</h2>
     <div id="board"></div>
+    <h2 id="comparetitle" style="display:none">Comparar corridas</h2>
+    <div id="compare"></div>
     <h2>Crônica do mundo</h2>
     <div id="feed"></div>
   </aside>
@@ -151,6 +153,45 @@ function drawBoard(f) {
   $('board').innerHTML = rows;
 }
 
+// Comparador de corridas (issue D, fatia 2): compara o ÚLTIMO frame de
+// duas corridas, empresa por empresa (pelo nome). Não toca no replay: sem
+// ?compare, nada muda; com ?compare, só preenche #compare.
+// Retorna { rows, totalA, totalB } para teste estrutural.
+function compareRuns(framesA, framesB) {
+  const last = frames => frames[frames.length - 1];
+  const byName = f => Object.fromEntries(last(f).companies.map(c => [c.name, c]));
+  const A = byName(framesA), B = byName(framesB);
+  const names = [...new Set([...Object.keys(A), ...Object.keys(B)])].sort();
+  const rows = names.map(name => ({
+    name,
+    cashA: A[name] ? A[name].cash : null,
+    cashB: B[name] ? B[name].cash : null,
+    delta: (A[name] && B[name]) ? B[name].cash - A[name].cash : null,
+    stageA: A[name] ? A[name].stage : null,
+    stageB: B[name] ? B[name].stage : null,
+    aliveA: A[name] ? A[name].alive : null,
+    aliveB: B[name] ? B[name].alive : null,
+  }));
+  const total = m => rows.reduce((s, r) => s + (r[m] || 0), 0);
+  return { rows, totalA: total('cashA'), totalB: total('cashB') };
+}
+
+function renderCompare(cmp, labelB) {
+  $('comparetitle').style.display = '';
+  const money = v => v === null ? '—' : 'US$ ' + (v / 1e6).toFixed(1) + 'M';
+  const rows = cmp.rows.map(r => {
+    const d = r.delta === null ? '—'
+      : (r.delta >= 0 ? '+' : '−') + 'US$ ' + (Math.abs(r.delta) / 1e6).toFixed(1) + 'M';
+    const color = r.delta === null ? '' : (r.delta >= 0 ? '#9ae6b4' : '#f87171');
+    return `<div class="row"><span class="dot" style="background:#26304d"></span>
+     <span>${r.name}<br><span class="stage">elo: ${STAGE[r.stageA] ?? '—'} → ${STAGE[r.stageB] ?? '—'}</span></span>
+     <span>${money(r.cashA)} → ${money(r.cashB)}<br>
+     <span style="color:${color}">${d}</span></span></div>`;
+  }).join('');
+  $('compare').innerHTML = `<div class="row"><span></span><span>segunda corrida: ${labelB}</span>
+   <span>${money(cmp.totalA)} → ${money(cmp.totalB)}</span></div>` + rows;
+}
+
 function drawFeed(f) {
   const evs = DATA.chronicle.filter(e => e.tick <= f.tick);
   $('feed').innerHTML = evs.slice(-90).reverse().map(e =>
@@ -186,8 +227,20 @@ const runDir = (runParam && !runParam.includes('..'))
   ? runParam.replace(/\/$/, '') : null;
 if (runDir) $('runlabel').textContent = 'corrida: ' + runDir;
 const framesUrl = runDir ? runDir + '/frames.json' : 'frames.json';
-fetch(framesUrl).then(r => r.json()).then(load)
-  .catch(() => { $('feed').innerHTML = '<div class="ev">Não achei ' + framesUrl + ' — use o seletor de arquivo acima (gere com: python -m mundo.cli --out viewer).</div>'; });
+// Segunda corrida para comparar: ?compare=results/<corrida> busca
+// <corrida>/frames.json e compara só o frame final. Mesma trava anti-'..'
+// do ?run; falha aqui não quebra o replay principal.
+const compareParam = new URLSearchParams(location.search).get('compare');
+const compareDir = (compareParam && !compareParam.includes('..'))
+  ? compareParam.replace(/\/$/, '') : null;
+fetch(framesUrl).then(r => r.json()).then(data => {
+  load(data);
+  if (compareDir) {
+    fetch(compareDir + '/frames.json').then(r => r.json())
+      .then(other => renderCompare(compareRuns(DATA.frames, other.frames), compareDir))
+      .catch(() => { $('compare').innerHTML = '<div class="ev">Não achei ' + compareDir + '/frames.json para comparar.</div>'; });
+  }
+}).catch(() => { $('feed').innerHTML = '<div class="ev">Não achei ' + framesUrl + ' — use o seletor de arquivo acima (gere com: python -m mundo.cli --out viewer).</div>'; });
 </script>
 </body>
 </html>
