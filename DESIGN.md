@@ -75,8 +75,10 @@ se organiza em eras nomeadas pelo fundador:
 produção, preços, instalações) · `companies.py` (agentes/personalidades) ·
 `tools_sim.py` (InstaSim/ZapSim/VidSim/LojaSim) · `engine.py` (ticks, mercado, ledger de
 conservação) · `chronicle.py` (eventos/história) · `cli.py` (o painel de
-Deus). `viewer/index.html`: player dos frames (mapa, placar, crônica).
-Desenho completo do sistema em `docs/SDD.md`.
+Deus) — e, desde o v0, núcleo nativo, guarda v2 (Observation/Intentions),
+torneio, forja e crônica rica. `viewer/index.html`: player dos frames (mapa, placar, crônica).
+**A arquitetura vigente, completa e por módulo, é `docs/ARQUITETURA.md`**
+(o `docs/SDD.md` é o desenho original v0, histórico).
 
 ## Regra de computação
 

@@ -2,6 +2,8 @@
 ### O mundo onde empresas autônomas nascem, competem e fecham a cadeia
 ### v1.0 · 26/10/2026
 
+> **Adendo (27/10/2026) — documento histórico, não reescrito.** Este PRD v1.0 segue como a régua de produto. Desde a v1.0 já foram entregues: mundo v1 (13 depósitos/11 cidades com dados reais), VidSim e LojaSim, núcleo nativo com paridade 11/11 (Fase 5), guarda v2 (Observation/Intentions), torneio de políticas e preparação da forja (#6), crônica rica (#13). A arquitetura vigente é [`ARQUITETURA.md`](ARQUITETURA.md); o estado por frente está na tabela do [`README.md`](../README.md).
+
 > Régua deste documento, na voz do fundador: **a primeira coisa é se divertir
 > construindo; impacto mundial ou nada; sem desespero por grana.** Se uma
 > decisão de produto contradiz a diversão de criar e assistir a este mundo,

@@ -2,6 +2,8 @@
 ### Desenho do sistema: motor determinístico, crônica como fonte da verdade, políticas plugáveis
 ### v1.0 · 26/10/2026 · fundamentado no código v0 (`src/mundo/`)
 
+> **Adendo (27/10/2026) — documento histórico, não reescrito.** Este é o desenho original (v0). O contrato Policy/Observation que ele esboçava como futuro (§6.2) foi implementado pela guarda v2, e o sistema ganhou núcleo nativo, torneio, forja e crônica rica. **A arquitetura vigente é [`ARQUITETURA.md`](ARQUITETURA.md)** — leia este SDD como fundação e intenção, não como descrição atual.
+
 ---
 
 ## 1. Arquitetura em uma página
