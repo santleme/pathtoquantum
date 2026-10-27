@@ -11,6 +11,9 @@ Uso:
   # 2) envio real (precisa do usuário do Kaggle dono do token):
   python3 scripts/kaggle_push_kernel.py --usuario SEU_USUARIO_KAGGLE
   #    ou edite "id" em notebooks/kernel-metadata.json antes de rodar.
+  #    Kernels com metadata próprio (vereditos, smoke) usam --metadata:
+  python3 scripts/kaggle_push_kernel.py --usuario SEU_USUARIO_KAGGLE \\
+      --metadata kernel-metadata-fase5.json
 
 O que o envio faz: POST https://www.kaggle.com/api/v1/kernels/push com o
 corpo JSON que a API espera (id, title, text = conteúdo do .ipynb,
@@ -53,8 +56,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError("redirect recusado, verifique o endpoint")
 
 
-def load_inputs(usuario: str | None) -> tuple[dict, str]:
-    meta_path = NOTEBOOKS / "kernel-metadata.json"
+def load_inputs(usuario: str | None, metadata_name: str = "kernel-metadata.json") -> tuple[dict, str]:
+    meta_path = NOTEBOOKS / metadata_name
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     if usuario:
         slug = str(meta["id"]).split("/", 1)[-1]
@@ -114,6 +117,10 @@ def push(payload: dict) -> dict:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--usuario", help="usuário do Kaggle dono do token (substitui o do metadata)")
+    ap.add_argument("--metadata", default="kernel-metadata.json",
+                    help="arquivo de metadata em notebooks/ (ex.: kernel-metadata-fase5.json). "
+                         "Sem isto o push usa kernel-metadata.json — confira slug e code_file "
+                         "no resumo impresso antes de confirmar o envio.")
     ap.add_argument("--dry-run", action="store_true",
                     help="só monta e valida o payload; não envia nada")
     ap.add_argument("--bundle-src", action="store_true",
@@ -150,7 +157,7 @@ def main(argv: list[str]) -> int:
         if r.returncode != 0:
             return 1
 
-    meta, text = load_inputs(args.usuario)
+    meta, text = load_inputs(args.usuario, args.metadata)
     payload = build_payload(meta, text)
 
     resumo = {k: (f"<{len(v)} caracteres do notebook>" if k == "text" else v)
