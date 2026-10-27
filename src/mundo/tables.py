@@ -54,3 +54,25 @@ def countries_table(engine) -> tuple[list[str], np.ndarray]:
     rows = [[countries[n]["S"], countries[n]["fx"], countries[n]["tau"]]
             for n in names]
     return names, np.array(rows, dtype=np.float64).reshape(len(names), 3)
+
+
+def facilities_table(engine) -> tuple[list[str], np.ndarray]:
+    """Instalações e o estado B2 (design §3.1: fac_age/fac_cond/
+    fac_down_until): (ids na ordem (dono, criação), matriz (F, 4)).
+
+    Colunas: cid do dono, idade (meses), condição h, parada (0/1 —
+    quebrada ou em oficina). A projeção LÊ o estado, não o inventa:
+    sem equip_v2 (ou instalação nunca operada sob o B2), idade e
+    condição são os defaults (0, 1,0) e nada está parado."""
+    ids: list[str] = []
+    rows: list[list[float]] = []
+    for c in engine.companies:
+        for fid, fac in c.facilities.items():
+            eq = fac.get("equip") or {}
+            down = 1.0 if (eq.get("broken")
+                           or (eq and engine.tick
+                               <= eq.get("down_until", -1))) else 0.0
+            ids.append(fid)
+            rows.append([float(c.cid), float(eq.get("age", 0)),
+                         float(eq.get("cond", 1.0)), down])
+    return ids, np.array(rows, dtype=np.float64).reshape(len(ids), 4)

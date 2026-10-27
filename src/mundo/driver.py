@@ -32,6 +32,8 @@ class EpisodeSpec:
     market_params: dict | None = None   # override de parâmetros do B1
     country_v2: bool = False            # B3 país/política + B4a (Fase 3)
     country_params: dict | None = None  # override de parâmetros do B3/B4a
+    equip_v2: bool = False              # B2 equipamentos (Fase 4)
+    equip_params: dict | None = None    # override de parâmetros do B2
     god_events: tuple | None = None     # tupla de dicts (congelada)
     keep_frames: bool = False           # frames pesam; treino não precisa
     policy_specs: tuple | None = None   # PolicySpec por cid (torneios);
@@ -50,7 +52,9 @@ def run_episode(spec: EpisodeSpec) -> dict:
                  world_data=spec.world_data, market_v2=spec.market_v2,
                  market_params=spec.market_params,
                  country_v2=spec.country_v2,
-                 country_params=spec.country_params)
+                 country_params=spec.country_params,
+                 equip_v2=spec.equip_v2,
+                 equip_params=spec.equip_params)
     res = eng.run(spec.ticks)
     out = {
         "seed": spec.seed,
@@ -71,6 +75,8 @@ def run_episode(spec: EpisodeSpec) -> dict:
         "companies": [{"cid": c.cid, "name": c.name,
                        "archetype": c.archetype} for c in eng.companies],
     }
+    if "equipment" in res:              # B2 ligado: placar de frotas
+        out["equipment"] = res["equipment"]
     if spec.keep_frames:
         out["frames"] = res["frames"]
     return out

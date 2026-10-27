@@ -12,7 +12,7 @@ import random
 
 from dataclasses import asdict
 
-from . import chain, countrydata, marketdata
+from . import chain, countrydata, equipdata, marketdata
 from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, StockBook, make_companies
 from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
@@ -102,6 +102,11 @@ class HeuristicPolicy(Policy):
         spendable = comp.cash - self.reserve(comp)
         capex_done = False
 
+        # 0) Equipamentos (B2): reparar / manter / trocar a frota —
+        #    só existe com equip_v2 ligado; desligado, nem um bit muda
+        if engine.equip_v2:
+            self.maintain_equipment(engine, comp)
+
         # 1) Mineração: sondar / reivindicar / construir mina
         mines = [f for f in comp.facilities.values() if f["kind"] == "mine"]
         desired_mines = 1 + int(t["aggression"] * self.p["mines_coef"])
@@ -162,6 +167,40 @@ class HeuristicPolicy(Policy):
 
         # 5) Ferramentas simuladas
         self.use_tools(engine, comp)
+
+    def maintain_equipment(self, engine, comp: Company) -> None:
+        """Os três verbos do B2 — reparar, manter, trocar (overhaul).
+
+        A propensão a cuidar da frota nasce dos traços: quem tem
+        aggression alta roda até quebrar (e só paga o reparo com o
+        caixa bem folgado); quem é cauteloso mantém cedo e troca a
+        planta velha antes do colapso. Limiares e multiplicadores são
+        DADO (equipdata, seção "policy"); custos e física, do motor.
+        Instalação quebrada/em oficina não recebe PM nem overhaul."""
+        pol = engine._equip["policy"]
+        model = engine._equip["model"]
+        care = 1.0 - comp.traits["aggression"]
+        reserve = self.reserve(comp)
+        maint_thr = pol["maint_h_base"] + care * pol["maint_h_care_span"]
+        repair_mult = pol["repair_mult_care0"] + care * (
+            pol["repair_mult_care1"] - pol["repair_mult_care0"])
+        for fac in list(comp.facilities.values()):
+            eq = engine._fac_equip(fac)
+            build = chain.FACILITIES[fac["kind"]]["cost"]
+            if eq["broken"]:
+                if comp.cash - reserve > eq["repair_cost"] * repair_mult:
+                    engine.repair_facility(comp, fac)
+                continue
+            if engine.tick <= eq["down_until"]:
+                continue        # em oficina: nada a decidir neste tick
+            if eq["age"] >= pol["overhaul_min_age"] \
+                    and eq["cond"] <= pol["overhaul_max_cond"]:
+                if comp.cash - reserve > build * model["overhaul_frac"]:
+                    engine.overhaul_facility(comp, fac)
+                continue
+            if eq["cond"] < maint_thr \
+                    and comp.cash - reserve > build * model["maint_frac"]:
+                engine.maintain_facility(comp, fac)
 
     def pick_deposit(self, engine, comp: Company) -> Deposit | None:
         hq = engine._city_by_name[comp.hq_city]
@@ -347,7 +386,9 @@ def _company_state(c: Company) -> dict:
         "facilities": {fid: {"id": f["id"], "kind": f["kind"],
                              "cell": list(f["cell"]),
                              **({"deposit": f["deposit"]}
-                                if "deposit" in f else {})}
+                                if "deposit" in f else {}),
+                             **({"equip": dict(f["equip"])}
+                                if "equip" in f else {})}
                        for fid, f in c.facilities.items()},
         "claimed": sorted([list(cell) for cell in c.claimed]),
         "knowledge": {k: [g, s] for k, (g, s) in c.knowledge.items()},
@@ -368,7 +409,9 @@ def _company_from_state(cs: dict) -> Company:
     comp.facilities = {fid: {"id": f["id"], "kind": f["kind"],
                              "cell": tuple(f["cell"]),
                              **({"deposit": f["deposit"]}
-                                if "deposit" in f else {})}
+                                if "deposit" in f else {}),
+                             **({"equip": dict(f["equip"])}
+                                if "equip" in f else {})}
                        for fid, f in cs["facilities"].items()}
     comp.claimed = {tuple(cell) for cell in cs["claimed"]}
     comp.knowledge = {k: (v[0], v[1]) for k, v in cs["knowledge"].items()}
@@ -414,7 +457,9 @@ class Engine:
                  market_v2: bool = False,
                  market_params: dict | None = None,
                  country_v2: bool = False,
-                 country_params: dict | None = None):
+                 country_params: dict | None = None,
+                 equip_v2: bool = False,
+                 equip_params: dict | None = None):
         self.policy = policy if policy is not None else HeuristicPolicy()
         self.rng = random.Random(seed)
         self.seed = seed
@@ -468,6 +513,17 @@ class Engine:
         self.money_from_external = 0.0  # resto do mundo -> empresas (B4a)
         if country_v2:
             self._init_countries(country_params)
+        # Equipamentos (B2) — Degrau 1, Fase 4. Desligado por padrão:
+        # nenhum estado por instalação, nenhum RNG, nenhum bloco
+        # serializado — goldens da Fase 1 bit-idênticos. Ligado, o
+        # estado (idade/condição/retorno) vive no dict da instalação
+        # (chave "equip", criada preguiçosamente) e os parâmetros são
+        # DADO (mundo.equipdata).
+        self.equip_v2 = equip_v2
+        self._equip: dict | None = None
+        self._equip_stats: dict[int, dict] = {}
+        if equip_v2:
+            self._init_equipment(equip_params)
         self.demand_factors: dict[str, tuple[float, int]] = {}
         self.god_events = sorted(god_events or [], key=lambda e: e["tick"])
         self.first_link: dict[int, str] = {}
@@ -684,6 +740,168 @@ class Engine:
                     metric="stage", from_cid=old.cid, to_cid=stage_leader.cid)
                 self._stage_leader = stage_leader.cid
 
+    # -- equipamentos (B2) --------------------------------------------------
+    def _init_equipment(self, params_override: dict | None) -> None:
+        self._equip = equipdata.resolve_equip_params(params_override)
+        self._equip_stats = {c.cid: {"fac_ticks": 0, "down_ticks": 0,
+                                     "breaks": 0, "repairs": 0,
+                                     "maintenances": 0, "overhauls": 0}
+                             for c in self.companies}
+
+    def _fac_equip(self, fac: dict) -> dict:
+        """Estado B2 da instalação (idade, condição, retorno de quebra),
+        criado preguiçosamente na primeira operação com equip_v2 ligado.
+        Desligado, este método nunca é chamado e o dict da instalação
+        fica byte-idêntico ao clássico."""
+        eq = fac.get("equip")
+        if eq is None:
+            eq = fac["equip"] = {"age": 0, "cond": 1.0, "down_until": -1,
+                                 "broken": False, "repair_cost": 0.0,
+                                 "repair_ticks": 0}
+        return eq
+
+    def facility_down(self, fac: dict) -> bool:
+        """A instalação está parada NESTE tick? (quebrada à espera de
+        reparo pago, ou dentro da janela de oficina.)"""
+        eq = fac.get("equip")
+        return bool(eq) and (eq["broken"] or self.tick <= eq["down_until"])
+
+    def facility_condition(self, fac: dict) -> tuple[int, float, bool]:
+        """(idade em meses, condição h, parada?) — a observação LEGAL
+        das PRÓPRIAS instalações. De rivais, só o sintoma público: a
+        notícia da quebra na crônica e a oferta que some do mercado.
+        Somente leitura: não cria estado."""
+        eq = fac.get("equip")
+        if not eq:
+            return (0, 1.0, False)
+        return (eq["age"], eq["cond"], self.facility_down(fac))
+
+    def _wear_and_roll(self, comp: Company, fac: dict, eq: dict,
+                       utilization: float) -> None:
+        """Desgaste do mês operado + sorteio de quebra (hazard discreto
+        de Weibull sobre a idade, β≈1,6). Planta parada não chega aqui:
+        mothball em bust é decisão real (design §4/B2)."""
+        p = self._equip["facilities"][fac["kind"]]
+        model = self._equip["model"]
+        eq["cond"] = max(0.0, eq["cond"] - p["wear_rate"]
+                         * utilization * model["wear_scale"])
+        q = equipdata.weibull_hazard(eq["age"], p["eta_months"],
+                                     p["beta"]) * model["hazard_scale"]
+        if q > 0.0 and self.rng.random() < q:
+            self._break_facility(comp, fac, eq)
+
+    def _break_facility(self, comp: Company, fac: dict, eq: dict) -> None:
+        model = self._equip["model"]
+        build_cost = chain.FACILITIES[fac["kind"]]["cost"]
+        eq["broken"] = True
+        eq["repair_cost"] = build_cost * self.rng.uniform(
+            model["repair_frac_min"], model["repair_frac_max"])
+        raw = self.rng.lognormvariate(model["repair_ticks_lognorm_mu"],
+                                      model["repair_ticks_lognorm_sigma"])
+        eq["repair_ticks"] = max(int(model["repair_ticks_min"]),
+                                  min(int(model["repair_ticks_max"]),
+                                      round(raw)))
+        self._equip_stats[comp.cid]["breaks"] += 1
+        link = chain.FACILITY_LINK[fac["kind"]]
+        self.chronicle.add(
+            self.tick, "breakdown",
+            f"QUEBRA: a instalação de {link} da {comp.name} quebra com "
+            f"{eq['age']} meses de operação e condição a "
+            f"{eq['cond']:.0%} — parada até a empresa pagar o reparo de "
+            f"US$ {eq['repair_cost']:,.0f} (estimativa: "
+            f"{eq['repair_ticks']} mês(es) de oficina).", comp.name,
+            cid=comp.cid, fid=fac["id"], facility_kind=fac["kind"],
+            age=eq["age"], condition=eq["cond"],
+            repair_cost=eq["repair_cost"],
+            repair_ticks=eq["repair_ticks"])
+
+    def repair_facility(self, comp: Company, fac: dict) -> None:
+        """A política decidiu consertar: paga o reparo (sink nomeado
+        nos flows) e a instalação volta após `repair_ticks` meses de
+        oficina. Sem reparo automático: quebrada, ela espera a decisão."""
+        eq = self._fac_equip(fac)
+        cost = eq["repair_cost"]
+        self._spend(comp, cost, reason="repair")
+        eq["broken"] = False
+        eq["down_until"] = self.tick + eq["repair_ticks"] - 1
+        self._equip_stats[comp.cid]["repairs"] += 1
+        link = chain.FACILITY_LINK[fac["kind"]]
+        self.chronicle.add(
+            self.tick, "maintenance",
+            f"REPARO: {comp.name} paga US$ {cost:,.0f} e manda sua "
+            f"instalação de {link} para a oficina — volta em "
+            f"{eq['repair_ticks']} mês(es).", comp.name,
+            cid=comp.cid, fid=fac["id"], facility_kind=fac["kind"],
+            action="repair", cost=cost, repair_ticks=eq["repair_ticks"])
+
+    def maintain_facility(self, comp: Company, fac: dict) -> None:
+        """Manutenção preventiva decidida pela política: paga
+        maint_frac do custo de construção (sink nomeado) e restaura h
+        em +maint_restore (teto 1,0). Com h <= maint_downtime_h a
+        planta para 1 tick para o serviço; acima disso, é rotina —
+        registrada nos flows, narrada só quando para a planta."""
+        eq = self._fac_equip(fac)
+        model = self._equip["model"]
+        cost = chain.FACILITIES[fac["kind"]]["cost"] * model["maint_frac"]
+        self._spend(comp, cost, reason="maintenance")
+        before = eq["cond"]
+        eq["cond"] = min(1.0, before + model["maint_restore"])
+        self._equip_stats[comp.cid]["maintenances"] += 1
+        if before <= model["maint_downtime_h"]:
+            eq["down_until"] = max(eq["down_until"], self.tick)
+            link = chain.FACILITY_LINK[fac["kind"]]
+            self.chronicle.add(
+                self.tick, "maintenance",
+                f"MANUTENÇÃO PESADA: {comp.name} para sua instalação de "
+                f"{link} por um mês para salvar uma condição de "
+                f"{before:.0%} (US$ {cost:,.0f}) — sai da oficina a "
+                f"{eq['cond']:.0%}.", comp.name,
+                cid=comp.cid, fid=fac["id"], facility_kind=fac["kind"],
+                action="preventive", cost=cost, condition_before=before,
+                condition_after=eq["cond"])
+
+    def overhaul_facility(self, comp: Company, fac: dict) -> None:
+        """Overhaul decidido pela política: 60% do custo de construção
+        (sink nomeado) zeram idade e condição — é a troca da planta
+        sem trocar a planta, e o que derruba o hazard de Weibull."""
+        eq = self._fac_equip(fac)
+        model = self._equip["model"]
+        cost = chain.FACILITIES[fac["kind"]]["cost"] \
+            * model["overhaul_frac"]
+        self._spend(comp, cost, reason="overhaul")
+        age_before = eq["age"]
+        eq["age"] = 0
+        eq["cond"] = 1.0
+        self._equip_stats[comp.cid]["overhauls"] += 1
+        link = chain.FACILITY_LINK[fac["kind"]]
+        self.chronicle.add(
+            self.tick, "maintenance",
+            f"OVERHAUL: {comp.name} gasta US$ {cost:,.0f} e reconstrói "
+            f"sua instalação de {link} por dentro — {age_before} meses "
+            f"de idade viram planta nova.", comp.name,
+            cid=comp.cid, fid=fac["id"], facility_kind=fac["kind"],
+            action="overhaul", cost=cost, age_before=age_before)
+
+    def equipment_summary(self) -> dict:
+        """Disponibilidade e contadores de equipamento por empresa (B2):
+        o placar que o notebook de veredito da Fase 4 lê. Disponibilidade
+        = 1 − meses parada / meses de instalação (quebra + oficina)."""
+        companies = {}
+        tot_fac = tot_down = 0
+        for c in self.companies:
+            st = dict(self._equip_stats.get(c.cid, {}))
+            ft = st.get("fac_ticks", 0)
+            dt = st.get("down_ticks", 0)
+            tot_fac += ft
+            tot_down += dt
+            st["archetype"] = c.archetype
+            st["availability"] = (1.0 - dt / ft) if ft else 1.0
+            companies[c.name] = st
+        return {"companies": companies,
+                "fleet": {"fac_ticks": tot_fac, "down_ticks": tot_down,
+                          "availability": (1.0 - tot_down / tot_fac)
+                          if tot_fac else 1.0}}
+
     # -- produção -----------------------------------------------------------
     def _produce(self, comp: Company) -> None:
         if not comp.alive:
@@ -692,6 +910,19 @@ class Engine:
             kind = fac["kind"]
             cap = chain.FACILITIES[kind]["capacity"]
             cost = chain.OPERATING_COST[kind]
+            eq = None
+            thru = 0.0
+            if self.equip_v2:
+                eq = self._fac_equip(fac)
+                st = self._equip_stats[comp.cid]
+                st["fac_ticks"] += 1
+                eq["age"] += 1
+                if eq["broken"] or self.tick <= eq["down_until"]:
+                    st["down_ticks"] += 1
+                    continue    # B2: quebrada/em oficina — não produz,
+                                # não paga opex, não desgasta
+                cap = equipdata.effective_capacity(
+                    cap, eq["cond"], eq["age"], self._equip["model"])
             if kind == "mine":
                 dep = self._deposit_by_name[fac["deposit"]]
                 if self.country_v2 \
@@ -701,6 +932,7 @@ class Engine:
                 crude = min(cap, self.remaining[dep.name])
                 if crude <= 0:
                     continue
+                thru = crude
                 self.remaining[dep.name] -= crude
                 payable = crude * dep.grade
                 waste = crude - payable
@@ -718,6 +950,7 @@ class Engine:
                     if qty <= 0:
                         continue
                     budget -= qty
+                    thru += qty
                     self._convert(comp, raw, qty, refined,
                                   qty * chain.REFINE_YIELD)
                     self._ops_spend(comp, self.city_country(comp.hq_city),
@@ -732,6 +965,7 @@ class Engine:
                 units = int(max_units)
                 if units <= 0:
                     continue
+                thru = units * recipe["out"]
                 for inp, per in recipe["inputs"].items():
                     qty = units * per
                     comp.stocks.add(chain.COMMODITY_INDEX[inp], -qty)
@@ -748,6 +982,10 @@ class Engine:
                     self.chronicle.add(self.tick, "record",
                                        f"{comp.name} entrega um SUPERCOMPUTADOR "
                                        f"montado por conta própria.", comp.name)
+            if eq is not None and thru > 0.0:
+                # B2: operou -> desgasta pela utilização e rola a quebra
+                self._wear_and_roll(comp, fac, eq,
+                                    thru / cap if cap > 0 else 0.0)
         if self.country_v2:
             # royalties do tick de produção, lançados de uma vez
             due = self._royalty_due.pop(comp.cid, 0.0)
@@ -1531,6 +1769,11 @@ class Engine:
         acq = hist.get("acquisition")
         if acq and self.tick - acq[1] <= 6:
             return "aquisicao", "alavancou-se comprando os ativos de uma rival"
+        if self.equip_v2 and comp.facilities and any(
+                f.get("equip", {}).get("broken")
+                for f in comp.facilities.values()):
+            return "quebra", ("rodou a frota até quebrar — os reparos "
+                              "adiados comeram o caixa")
         if not comp.facilities:
             return "sem_operacao", "queimou o caixa sem montar operação"
         stock_value = sum(comp.stocks[c] * chain.BASE_PRICES[c]
@@ -1578,6 +1821,20 @@ class Engine:
                                    facility_ids=facility_ids, price=price)
 
     # -- frames ------------------------------------------------------------------
+    def _frame_facility(self, fac: dict) -> dict:
+        """A instalação como o frame a mostra. Com B2 ligado, o frame
+        carrega o sintoma PÚBLICO do equipamento (idade, condição,
+        parada) — é o que o mercado e o Deus veem; desligado, o frame
+        é byte-idêntico ao clássico."""
+        out = {"kind": fac["kind"], "cell": list(fac["cell"]),
+               "deposit": fac.get("deposit")}
+        if self.equip_v2:
+            age, cond, down = self.facility_condition(fac)
+            out["age"] = age
+            out["condition"] = round(cond, 3)
+            out["down"] = down
+        return out
+
     def _snapshot(self) -> None:
         frame = {
             "tick": self.tick,
@@ -1588,8 +1845,7 @@ class Engine:
                 "color": c.color, "hq": c.hq_city, "alive": c.alive,
                 "cash": round(c.cash, 2), "stage": c.chain_stage(),
                 "territory": sorted([list(cell) for cell in c.claimed]),
-                "facilities": [{"kind": f["kind"], "cell": list(f["cell"]),
-                                "deposit": f.get("deposit")}
+                "facilities": [self._frame_facility(f)
                                for f in c.facilities.values()],
                 "stocks": {k: round(v, 3) for k, v in c.stocks.items()
                            if v > 0.01},
@@ -1718,6 +1974,9 @@ class Engine:
                 "cover": dict(self._cover),
                 "regimes": dict(self._regime),
             }
+        if self.equip_v2:
+            # disponibilidade e contadores de equipamento (B2)
+            res["equipment"] = self.equipment_summary()
         if self.country_v2:
             # índices públicos por país + a conta "externo" do B4a
             res["politics"] = {name: self.country_state(name)
@@ -1790,6 +2049,16 @@ class Engine:
                 "price_ring": {c: list(r)
                                for c, r in self._price_ring.items()},
                 "record_state": copy.deepcopy(self._record_state),
+            }
+        if self.equip_v2:
+            # bloco presente SÓ com o B2 ligado: desligado, o state_dict
+            # é byte-idêntico ao clássico (goldens da Fase 1). O estado
+            # por instalação viaja nos dicts das instalações (chave
+            # "equip"); aqui vão parâmetros e contadores.
+            state["equip_v2"] = {
+                "params": copy.deepcopy(self._equip),
+                "stats": {str(cid): dict(st)
+                          for cid, st in self._equip_stats.items()},
             }
         if self.country_v2:
             # bloco presente SÓ com B3/B4a ligados: desligado, o
@@ -1897,6 +2166,15 @@ class Engine:
             eng._parity_surcharge = dict(ct.get("parity_surcharge", {}))
             eng._force_events = list(eng._ctry.get("force_events") or [])
             eng._rebuild_election_offsets()
+        # equipamentos: states sem o bloco -> segue desligado
+        eqb = state.get("equip_v2")
+        eng.equip_v2 = bool(eqb)
+        eng._equip = None
+        eng._equip_stats = {}
+        if eqb:
+            eng._equip = equipdata._validate(copy.deepcopy(eqb["params"]))
+            eng._equip_stats = {int(cid): dict(st)
+                                for cid, st in eqb["stats"].items()}
         eng._tick_stock_totals = None
         eng._tick_seasonal = None
         return eng

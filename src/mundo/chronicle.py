@@ -28,7 +28,11 @@ class Event:
                          # politics (B3 — eventos políticos nomeados em
                          # data["event"]: election, royalty_reform,
                          # export_restriction, state_jv, judicial_halt,
-                         # subsidy, disaster; idem narrativo)
+                         # subsidy, disaster; idem narrativo),
+                         # breakdown e maintenance (B2 — quebra de
+                         # instalação; maintenance nomeia a ação em
+                         # data["action"]: repair, preventive, overhaul;
+                         # idem narrativos — o dinheiro anda nos flows)
     text: str
     company: str | None = None
     data: dict = field(default_factory=dict)
