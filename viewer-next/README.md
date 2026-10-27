@@ -1,4 +1,4 @@
-# viewer-next — Path to Quantum (F0+F1+F2)
+# viewer-next — Path to Quantum (F0+F1+F2+F3)
 
 App Vite + TypeScript (sem framework) da camada visual nova. O viewer legado em
 `../viewer/` continua intocado e abrindo corridas antigas. Stack: `docs/adr/ADR-001-stack-visual.md`;
@@ -43,7 +43,12 @@ Ressalva honesta do benchmark: roda em Node com ctx Canvas stub (conta comandos,
 rasteriza) — mede a lógica de frame (projeção + comandos), não o fps de um browser real.
 É o piso comparável/reproduzível; a margem (3,5× abaixo do teto) é a proteção.
 
-Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orientado a dados, feed da crônica F2).
+Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orientado a dados, feed da crônica F2, lentes e placar F3).
+
+Bundle após a F3 (re-medido com `npm run build && npm run measure`): app
+**16,9 KiB gzip** (teto 180 KiB) — cresceu 3,6 KiB sobre os 13,3 KiB da F0/F1
+pelos módulos novos (`lenses.ts` + `board.ts`) e pelo CSS do placar/lentes no
+`index.html`; geografia inalterada (114,1 KiB bruto / 40,0 KiB gzip).
 
 ## F2 — A crônica vira show (VIS-03/VIS-04, branch `viewer/wow-v2-fatias`)
 
@@ -69,11 +74,38 @@ Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orien
   (Vitest — classificação/hierarquia, 119 sem flows, lote de novos, kind
   desconhecido, clique→salto).
 
-## Fora desta fatia (F3–F6 da spec)
+## F3 — Lente Empresas + placar-ranking (VIS-05/VIS-08, branch `viewer/wow-v2-fatias`)
 
-Lentes + placar-ranking completo (F3) · barra da cadeia/Sankey (F4) ·
-README/lockup/favicon do repo (F5) · acessibilidade/responsivo/screenshots e o
-portão final de regressão (F6).
+- Mecanismo de lentes (`src/lenses.ts`): registro **único e declarativo**
+  `{id, label, layer, status}` — lente nova é 1 entrada no registro, nenhum
+  `if` no código de desenho. **Empresas** é a lente padrão e a única ativa;
+  Recursos/Produção/Comércio/Crônica aparecem no seletor como **"em breve"**:
+  clicar nelas só mostra o aviso — a camada, o tick e o frame **não mudam**
+  (nenhum JSON é recarregado na troca).
+- Seleção de empresa: clique numa linha do placar **ou no mapa** (instalação/
+  território mais próximo) seleciona; clicar de novo (ou no vazio do mapa)
+  desseleciona. A selecionada ganha **anel dourado + rótulo `◉ nome`** nas
+  instalações, contorno no território e selo textual "selecionada" no placar;
+  as demais recuam em alpha (0,3) no mapa e nas rotas — seleção nunca é
+  comunicada só por cor.
+- Placar-ranking (`src/board.ts`): posição numerada **1..n**, nome, arquétipo,
+  caixa formatado, **elo como segmentos preenchidos (n de 5) + rótulo textual**
+  ("elo: dispositivos (4/5)"), e **Δ de caixa desde o frame anterior** com seta
+  (▲/▼/±; no primeiro frame, "—" sem frame anterior). Empresa falida
+  (`alive: false`) é marcada com selo **"† falida"** além do esmaecimento.
+  Mapa e placar usam **exatamente** as cores `color` do frame (mesma fonte).
+- Âncoras: `npm run anchors` agora cobre também o VIS-08 — ordem e caixa do
+  frame final contra `scoreboard.json` (**Vetor Sul US$ 273,0M > Ferra Brasil
+  70,2M > Cuprum Andes 60,2M > Lítio Austral > PetroPlata > Andina Prime >
+  Nexo Indústrias > Órbita Systems 15,9M**), segmentos `[4,2,4,0,2,0,4,4]` e
+  Δ da Vetor Sul (+US$ 32,9M). Testes: `npm test` (registro de lentes, troca
+  sem mover o frame, seleção não-cor, placar/âncora, falida por fixture,
+  Δ, clique-no-mapa).
+
+## Fora desta fatia (F4–F6 da spec)
+
+Barra da cadeia/Sankey (F4) · README/lockup/favicon do repo (F5) ·
+acessibilidade/responsivo/screenshots e o portão final de regressão (F6).
 
 **VIS-07 — o que ainda se cumpre via viewer legado:** o seletor de arquivo
 avulso, o `?compare=` e o `?forge=` seguem só no legado (`../viewer/`, intocado).
