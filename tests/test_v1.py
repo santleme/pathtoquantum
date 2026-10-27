@@ -7,6 +7,7 @@ import pytest
 
 from mundo import world
 from mundo.engine import Engine
+from mundo.intentions import Spend
 
 
 # --------------------------------------------------------------------- #
@@ -183,10 +184,12 @@ class CapexSuicidePolicy(HeuristicPolicy):
     falência nasce dentro do log e a causa tem que sair 'capex'."""
 
     def decide(self, obs):
-        super().decide(obs)
+        out = super().decide(obs)
         if obs.me.cid == 0 and obs.world.tick >= 10 \
                 and obs.me.facilities:
-            obs.act.spend(obs.me.cash + 5_000_000.0, reason="build")
+            out = out + [Spend(obs.me.cash + 5_000_000.0,
+                               reason="build")]
+        return out
 
 
 def test_bankruptcy_with_probable_cause():

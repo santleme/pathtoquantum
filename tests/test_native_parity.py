@@ -194,7 +194,7 @@ def test_politica_customizada_recusada():
 
     class Noop(Policy):
         def decide(self, obs):
-            pass
+            return []
 
     with pytest.raises(ValueError):
         NativeEngine(seed=42, n_companies=8, policy=Noop())
