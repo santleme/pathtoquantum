@@ -3,3 +3,9 @@ __pycache__/
 *.egg-info/
 results/
 src/mundo/native/_native*.so
+
+# viewer-next (build)
+viewer-next/node_modules/
+viewer-next/dist/
+viewer-next/public/geo/
+viewer-next/public/data/
