@@ -5,7 +5,10 @@
 // (VIS-01/02/03/04/07), mecanismo de lentes com Empresas padrão, seleção por
 // canal não-cor e placar com posição/segmentos de elo/Δ de caixa (VIS-05/08) e
 // a barra/vista da cadeia (VIS-06): primeiros por elo dos `chain_link`, mercado
-// do elo em disputa, Sankey derivado de stocks/stage e estoques na seleção.
+// do elo em disputa, Sankey derivado de stocks/stage e estoques na seleção —
+// e a entrega pública (F5, VIS-09): lockup com marca derivada da capa no header,
+// favicon derivado e legenda viva da lente/frame (legend.ts) no lugar da antiga
+// legenda fixa de símbolos.
 import { feature } from 'topojson-client';
 import type { FeatureCollection } from 'geojson';
 import {
@@ -22,6 +25,7 @@ import { chainBarHtml, chainStateListHtml, sankeySvg, selectionProgressHtml, sto
 import { cellToLonLat, citiesFromWorld, depositsFromFrame } from './entities';
 import { esc, feedItemHtml, narrativeItems, newItemIndexes, tickFromFeedTarget } from './feed';
 import { DEFAULT_LENS_ID, emphasisAlpha, LENSES, resolveLensSelection } from './lenses';
+import { legendHtml, legendItems } from './legend';
 import { CanvasMapSurface, type MapSurface } from './mapsurface';
 import { resourceInfo } from './resources';
 
@@ -312,9 +316,11 @@ function renderBoard(f: Frame): void {
   const prev = idx > 0 ? run.frames[idx - 1] : null;
   const entries = rankCompanies(f, prev);
   $('board').innerHTML = entries.map((e) => boardRowHtml(e, e.company.id === selectedId)).join('');
-  $('legend').textContent =
-    `◆ depósito (nome + recurso + barra de reserva) · ● cidade-mercado (${citiesFromWorld(world).length} do world_data) · ` +
-    `depósitos neste frame: ${depositsFromFrame(f).length} (da corrida, não do mundo) · clique numa empresa ou no mapa seleciona`;
+  // Legenda viva (F5 — VIS-09): derivada do frame + lente ativa a cada render —
+  // empresa que sai do frame sai da legenda; nada de legenda fixa de símbolos.
+  $('legend').innerHTML = legendHtml(
+    legendItems(f, activeLensId, { cityCount: citiesFromWorld(world).length, selectedId }),
+  );
 }
 
 function renderFeed(f: Frame): void {
