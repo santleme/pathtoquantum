@@ -792,6 +792,27 @@ class Actuator(_View):
         self.__engine._note_link(self.__comp, stage)
 
 
+class SealedActuator(_View):
+    """O ``act`` da observação DE DECISÃO (fatia 3): um selo, não um
+    executor. No contrato declarativo a política não executa verbo
+    nenhum durante o ``decide`` — ela devolve a lista de
+    ``mundo.intentions`` e o motor valida e executa. Qualquer verbo
+    chamado aqui levanta ``RuntimeError`` com a explicação do
+    contrato, na hora e sem efeito no mundo. (O ``Actuator`` de
+    verdade continua existindo: é a ferramenta do executor do motor
+    e dos testes que exercitam os verbos direto, via
+    ``build_observation`` sem o selo.)"""
+
+    __slots__ = ()
+
+    def __getattr__(self, name: str):
+        raise RuntimeError(
+            f"obs.act.{name}: no contrato declarativo (fatia 3) a "
+            "decisão não executa verbos — decide(obs) devolve uma "
+            "lista de mundo.intentions e o motor as executa "
+            "(docs/OBSERVATION-SPEC.md §4)")
+
+
 class RandomFacade(_View):
     """Sorteio como serviço: só ``uniform``/``random``, repassados ao
     fluxo do motor na ordem em que a política os pede. O objeto
@@ -876,9 +897,15 @@ def build_company_view(engine, comp: Company) -> CompanyView:
     return CompanyView(comp, engine, hq)
 
 
-def build_observation(engine, comp: Company) -> Observation:
+def build_observation(engine, comp: Company, *,
+                      sealed_act: bool = False) -> Observation:
     """Monta a Observation da decisão de ``comp`` neste instante.
-    Função do motor: lê o estado vivo UMA vez e entrega só views."""
+    Função do motor: lê o estado vivo UMA vez e entrega só views.
+
+    ``sealed_act=True`` é a observação que o ``decide`` recebe
+    (fatia 3): o ``act`` vem selado (``SealedActuator``) — decidir é
+    declarar intenções, não executar verbos. Sem o selo (testes dos
+    verbos, uso interno do motor) o ``act`` é o ``Actuator`` vivo."""
     me = build_company_view(engine, comp)
     deposits = tuple(
         DepositView(d, engine.deposit_country(d),
@@ -915,5 +942,5 @@ def build_observation(engine, comp: Company) -> Observation:
         deposits=deposits, cities=cities, countries=countries,
         capex=capex, equip_policy=equip_policy,
         equip_model=equip_model)
-    return Observation(me, world, Actuator(engine, comp),
-                       RandomFacade(engine.rng))
+    act = SealedActuator() if sealed_act else Actuator(engine, comp)
+    return Observation(me, world, act, RandomFacade(engine.rng))

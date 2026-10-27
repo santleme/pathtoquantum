@@ -82,7 +82,12 @@ def build_policy(spec: PolicySpec) -> Policy:
 
 
 class PolicyRouter(Policy):
-    """Despacha ``decide`` e as fachadas por empresa (``obs.me.cid``)."""
+    """Despacha ``decide`` e as fachadas por empresa (``obs.me.cid``).
+
+    Desde a fatia 3 o despacho é declarativo: ``decide`` e as fases
+    devolvem as intenções da política da empresa (quem aplica é o
+    motor); ``build_downstream`` devolve o par (construiu?,
+    intenções) da política despachada."""
 
     def __init__(self, by_cid: dict | None = None,
                  default: Policy | None = None):
@@ -93,8 +98,8 @@ class PolicyRouter(Policy):
         return self.by_cid.get(cid, self.default)
 
     # -- a interface que o motor chama --------------------------------
-    def decide(self, obs) -> None:
-        self._for(obs.me.cid).decide(obs)
+    def decide(self, obs) -> list:
+        return self._for(obs.me.cid).decide(obs)
 
     def reserve(self, me) -> float:
         return self._for(me.cid).reserve(me)
@@ -102,20 +107,21 @@ class PolicyRouter(Policy):
     def pick_deposit(self, obs):
         return self._for(obs.me.cid).pick_deposit(obs)
 
-    def build_downstream(self, obs, spendable: float) -> bool:
-        return self._for(obs.me.cid).build_downstream(obs, spendable)
+    def build_downstream(self, obs, spendable: float, plan=None):
+        return self._for(obs.me.cid).build_downstream(obs, spendable,
+                                                      plan)
 
-    def plan_buys(self, obs) -> None:
-        self._for(obs.me.cid).plan_buys(obs)
+    def plan_buys(self, obs, plan=None) -> list:
+        return self._for(obs.me.cid).plan_buys(obs, plan)
 
     def buffer(self, me, commodity: str) -> float:
         return self._for(me.cid).buffer(me, commodity)
 
-    def plan_sells(self, obs) -> None:
-        self._for(obs.me.cid).plan_sells(obs)
+    def plan_sells(self, obs, plan=None) -> list:
+        return self._for(obs.me.cid).plan_sells(obs, plan)
 
-    def use_tools(self, obs) -> None:
-        self._for(obs.me.cid).use_tools(obs)
+    def use_tools(self, obs, plan=None) -> list:
+        return self._for(obs.me.cid).use_tools(obs, plan)
 
 
 def build_router(specs) -> PolicyRouter:

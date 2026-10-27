@@ -10,13 +10,19 @@ import json
 import math
 import random
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from . import chain, countrydata, equipdata, marketdata
 from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, StockBook, make_companies
-from .observation import (CompanyView, DepositView, Observation,
-                          build_company_view, build_observation)
+from .intentions import (INTENTION_TYPES, BuildFacility, Buy,
+                          IntentionError, MaintainFacility, Narrate,
+                          Narration, NoteLink, Offer, OverhaulFacility,
+                          Plan, Probe, RegisterClaim, RepairFacility,
+                          SetTool, Spend)
+from .observation import (Actuator, CompanyView, DepositView,
+                          Observation, _jsonify, build_company_view,
+                          build_observation)
 from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
                         LOJA_DURATION_TICKS, LOJA_FEE_PCT, VID_DEMAND_WEIGHT,
                         VID_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
@@ -36,14 +42,19 @@ class Policy:
     O motor chama ``decide(obs)`` uma vez por tick para cada empresa
     viva, já com as intenções do tick anterior zeradas — e entrega
     uma ``Observation`` (mundo.observation, guarda v2): a empresa
-    mesma como view só-leitura, o mundo público, os verbos de ação
-    e a fachada de sorteio. Política nenhuma recebe o ``Engine`` nem
-    ``Company`` crua: fog-of-war é tipo, não disciplina (SDD §6.2,
-    docs/OBSERVATION-SPEC.md). Políticas aprendidas (RL) implementam
-    esta interface sem tocar o motor.
+    mesma como view só-leitura, o mundo público e a fachada de
+    sorteio. No contrato declarativo (fatia 3,
+    docs/OBSERVATION-SPEC.md §4) o ``decide`` NÃO executa nada: ele
+    devolve a lista ordenada de ``mundo.intentions`` da decisão, e
+    o motor a valida (inteira, antes de qualquer execução) e a
+    executa em ordem — o ``obs.act`` da observação de decisão vem
+    selado justamente para o verbo não existir no caminho da
+    política. Política nenhuma recebe o ``Engine`` nem ``Company``
+    crua: fog-of-war é tipo, não disciplina (SDD §6.2). Políticas
+    aprendidas (RL) implementam esta interface sem tocar o motor.
     """
 
-    def decide(self, obs: Observation) -> None:
+    def decide(self, obs: Observation) -> list:
         raise NotImplementedError
 
 
@@ -99,16 +110,26 @@ class HeuristicPolicy(Policy):
         return self.p["reserve_base"] \
             + (1.0 - me.traits["risk"]) * self.p["reserve_risk_span"]
 
-    def decide(self, obs: Observation) -> None:
-        me, world, act = obs.me, obs.world, obs.act
+    def decide(self, obs: Observation) -> list:
+        """A decisão como DADO (fatia 3): planeja as fases contra a
+        sombra (``Plan`` — caixa e instalações como ficarão depois
+        que as intenções já declaradas executarem) e devolve a lista
+        ordenada; quem valida e executa é o motor. A ordem das
+        intenções é a ordem de mutação da era imperativa, e os
+        limiares leem a sombra exatamente onde a era imperativa
+        relia o mundo vivo — é isso que mantém o episódio
+        bit-idêntico (goldens)."""
+        me, world = obs.me, obs.world
         t = me.traits
+        plan = Plan.of(me)
+        out: list = []
         spendable = me.cash - self.reserve(me)
         capex_done = False
 
         # 0) Equipamentos (B2): reparar / manter / trocar a frota —
         #    só existe com equip_v2 ligado; desligado, nem um bit muda
         if world.equip_v2:
-            self.maintain_equipment(obs)
+            out += self.maintain_equipment(obs, plan)
 
         # 1) Mineração: sondar / reivindicar / construir mina
         mines = [f for f in me.facilities if f.kind == "mine"]
@@ -119,17 +140,21 @@ class HeuristicPolicy(Policy):
                 known = me.knowledge.get(target.name)
                 if known is None:
                     if spendable > chain.PROBE_COST:
-                        # a sondagem é o verbo que revela: gasto,
-                        # registro no knowledge e o par (grade, size)
-                        grade, _size = act.probe(target.name)
-                        if grade >= 0.78:
-                            act.narrate("probe",
-                                        f"{me.name} sonda {target.name} e "
-                                        f"encontra um depósito RICO.")
-                        elif grade <= 0.35:
-                            act.narrate("probe",
-                                        f"{me.name} sonda {target.name}: "
-                                        f"teor decepcionante.")
+                        # a sondagem declara as DUAS narrações: o
+                        # executor revela o teor e narra a candidata
+                        # selecionada (limiares da intenção), na
+                        # mesma posição da sequência de sempre
+                        out.append(Probe(
+                            target.name,
+                            on_rich=Narration(
+                                "probe",
+                                f"{me.name} sonda {target.name} e "
+                                f"encontra um depósito RICO."),
+                            on_poor=Narration(
+                                "probe",
+                                f"{me.name} sonda {target.name}: "
+                                f"teor decepcionante.")))
+                        plan.spend(chain.PROBE_COST)
                 elif not capex_done:
                     grade, _ = known
                     threshold = self.p["grade_thr_base"] \
@@ -141,46 +166,65 @@ class HeuristicPolicy(Policy):
                             + chain.FACILITIES["mine"]["cost"]) * mult
                     if grade >= threshold and spendable > cost:
                         if target.cell not in me.claimed:
-                            act.spend(chain.CLAIM_COST * mult,
-                                      reason="claim")
-                            act.register_claim(target.cell)
-                        act.spend(chain.FACILITIES["mine"]["cost"] * mult,
-                                  reason="build")
-                        fac = act.build_facility("mine", target.cell,
-                                                 deposit=target.name)
-                        act.narrate("mine",
-                                    f"{me.name} abre sua mina em "
-                                    f"{target.name}.",
-                                    cid=me.cid, fid=fac.id,
-                                    facility_kind="mine",
-                                    cell=list(target.cell),
-                                    deposit=target.name)
-                        act.note_link(1)
+                            out.append(Spend(chain.CLAIM_COST * mult,
+                                             reason="claim"))
+                            out.append(RegisterClaim(
+                                tuple(target.cell)))
+                            plan.spend(chain.CLAIM_COST * mult)
+                        out.append(Spend(
+                            chain.FACILITIES["mine"]["cost"] * mult,
+                            reason="build"))
+                        plan.spend(chain.FACILITIES["mine"]["cost"]
+                                   * mult)
+                        out.append(BuildFacility(
+                            "mine", tuple(target.cell),
+                            deposit=target.name,
+                            narration=Narration.of(
+                                "mine",
+                                f"{me.name} abre sua mina em "
+                                f"{target.name}.",
+                                cid=me.cid, facility_kind="mine",
+                                cell=list(target.cell),
+                                deposit=target.name)))
+                        plan.build("mine")
+                        out.append(NoteLink(1))
                         capex_done = True
 
         # 2) Elos de jusante
         if not capex_done:
-            capex_done = self.build_downstream(obs, spendable)
+            built, ints = self.build_downstream(obs, spendable, plan)
+            out += ints
+            capex_done = built
 
         # 3) Compras de insumos que faltam
-        self.plan_buys(obs)
+        out += self.plan_buys(obs, plan)
 
         # 4) Ofertas de venda (excedente sobre o buffer de jusante)
-        self.plan_sells(obs)
+        out += self.plan_sells(obs, plan)
 
         # 5) Ferramentas simuladas
-        self.use_tools(obs)
+        out += self.use_tools(obs, plan)
+        return out
 
-    def maintain_equipment(self, obs: Observation) -> None:
-        """Os três verbos do B2 — reparar, manter, trocar (overhaul).
+    def maintain_equipment(self, obs: Observation,
+                           plan: Plan | None = None) -> list:
+        """Os três verbos do B2 — reparar, manter, trocar (overhaul) —
+        como intenções devolvidas (fatia 3).
 
         A propensão a cuidar da frota nasce dos traços: quem tem
         aggression alta roda até quebrar (e só paga o reparo com o
         caixa bem folgado); quem é cauteloso mantém cedo e troca a
         planta velha antes do colapso. Limiares e multiplicadores são
         DADO (equipdata, seção "policy"); custos e física, do motor.
-        Instalação quebrada/em oficina não recebe PM nem overhaul."""
-        me, world, act = obs.me, obs.world, obs.act
+        Instalação quebrada/em oficina não recebe PM nem overhaul.
+        Os testes de caixa leem a SOMBRA (``plan.cash``), que abate
+        cada custo declarado na ordem — o caixa "vivo" da era
+        imperativa, em que um reparo pago pesava no teste da
+        instalação seguinte."""
+        me, world = obs.me, obs.world
+        if plan is None:
+            plan = Plan.of(me)
+        out: list = []
         pol = world.equip_policy
         model = world.equip_model
         care = 1.0 - me.traits["aggression"]
@@ -192,19 +236,24 @@ class HeuristicPolicy(Policy):
             eq = fac.equip
             build = chain.FACILITIES[fac.kind]["cost"]
             if eq.broken:
-                if me.cash - reserve > eq.repair_cost * repair_mult:
-                    act.repair(fac.id)
+                if plan.cash - reserve > eq.repair_cost * repair_mult:
+                    out.append(RepairFacility(fac.id))
+                    plan.spend(eq.repair_cost)
                 continue
             if world.tick <= eq.down_until:
                 continue        # em oficina: nada a decidir neste tick
             if eq.age >= pol["overhaul_min_age"] \
                     and eq.cond <= pol["overhaul_max_cond"]:
-                if me.cash - reserve > build * model["overhaul_frac"]:
-                    act.overhaul(fac.id)
+                cost = build * model["overhaul_frac"]
+                if plan.cash - reserve > cost:
+                    out.append(OverhaulFacility(fac.id))
+                    plan.spend(cost)
                 continue
-            if eq.cond < maint_thr \
-                    and me.cash - reserve > build * model["maint_frac"]:
-                act.maintain(fac.id)
+            cost = build * model["maint_frac"]
+            if eq.cond < maint_thr and plan.cash - reserve > cost:
+                out.append(MaintainFacility(fac.id))
+                plan.spend(cost)
+        return out
 
     def pick_deposit(self, obs: Observation) -> DepositView | None:
         me, world = obs.me, obs.world
@@ -230,9 +279,18 @@ class HeuristicPolicy(Policy):
                 best, best_score = d, score
         return best
 
-    def build_downstream(self, obs: Observation, spendable: float) -> bool:
-        me, world, act = obs.me, obs.world, obs.act
+    def build_downstream(self, obs: Observation, spendable: float,
+                         plan: Plan | None = None):
+        """O elo de jusante do tick como intenções (fatia 3):
+        devolve ``(construiu?, intenções)``. Os testes de ``has()``
+        leem a sombra (idênticos ao mundo vivo neste ponto da
+        decisão) e o ``NoteLink`` carrega o elo que a sombra terá
+        DEPOIS da construção — o mesmo ``chain_stage()`` pós-build
+        que a era imperativa lia da empresa recém-construída."""
+        me, world = obs.me, obs.world
         t = me.traits
+        if plan is None:
+            plan = Plan.of(me)
         hq_cell = me.hq.cell
         # B3: jusante é construído no país da sede — mesmo prêmio de
         # capex das minas (1,0 desligado — bit-idêntico)
@@ -242,17 +300,20 @@ class HeuristicPolicy(Policy):
             return spendable > chain.FACILITIES[kind]["cost"] * mult
 
         def build(kind, text):
-            act.spend(chain.FACILITIES[kind]["cost"] * mult,
-                      reason="build")
-            fac = act.build_facility(kind, hq_cell)
-            act.narrate("facility", text,
-                        cid=me.cid, fid=fac.id, facility_kind=kind,
-                        cell=list(hq_cell))
-            act.note_link(me.chain_stage())
-            return True
+            cost = chain.FACILITIES[kind]["cost"] * mult
+            plan.spend(cost)
+            plan.build(kind)
+            ints = [Spend(cost, reason="build"),
+                    BuildFacility(kind, tuple(hq_cell),
+                                  narration=Narration.of(
+                                      "facility", text, cid=me.cid,
+                                      facility_kind=kind,
+                                      cell=list(hq_cell))),
+                    NoteLink(plan.chain_stage())]
+            return True, ints
 
         raw_total = sum(me.stocks[r] for r in chain.RAW_TO_REFINED)
-        if me.has("mine") and not me.has("refinery") \
+        if plan.has("mine") and not plan.has("refinery") \
                 and raw_total > self.p["refinery_raw_trigger"] \
                 and affordable("refinery"):
             return build("refinery",
@@ -262,118 +323,166 @@ class HeuristicPolicy(Policy):
                           for m in ("copper", "lithium", "iron"))
         need = self.p["factory_need_vertical"] if t["vertical"] > 0.7 \
             else self.p["factory_need_default"]
-        if me.has("refinery") and not me.has("factory") \
+        if plan.has("refinery") and not plan.has("factory") \
                 and metal_value > need and affordable("factory"):
             return build("factory",
                          f"{me.name} ergue uma fábrica de componentes em "
                          f"{me.hq_city}.")
-        if me.has("factory") and not me.has("plant") \
+        if plan.has("factory") and not plan.has("plant") \
                 and me.stocks["component"] > self.p["plant_component_trigger"] \
                 and affordable("plant"):
             return build("plant",
                          f"{me.name} abre sua planta de dispositivos — "
                          f"a cadeia sobe mais um elo.")
-        if me.has("plant") and not me.has("assembly") \
+        if plan.has("plant") and not plan.has("assembly") \
                 and me.stocks["device"] > self.p["assembly_device_trigger"] \
-                and me.cash > chain.FACILITIES["assembly"]["cost"] \
+                and plan.cash > chain.FACILITIES["assembly"]["cost"] \
                 + self.p["assembly_cash_cushion"]:
             return build("assembly",
                          f"{me.name} anuncia a montadora de SUPERCOMPUTADORES. "
                          f"O topo da cadeia está ao alcance.")
-        return False
+        return False, []
 
-    def plan_buys(self, obs: Observation) -> None:
-        me, world, act = obs.me, obs.world, obs.act
-        spendable = me.cash - self.reserve(me)
+    def plan_buys(self, obs: Observation,
+                  plan: Plan | None = None) -> list:
+        """Compras do tick como intenções (fatia 3). O gastável é o
+        da SOMBRA — o caixa depois dos gastos já declarados neste
+        tick, que é o caixa vivo que a era imperativa relia aqui; e
+        os ``has()`` são os da sombra: uma fábrica construída na
+        fase anterior DESTE tick já puxa compras, como sempre puxou."""
+        me, world = obs.me, obs.world
+        if plan is None:
+            plan = Plan.of(me)
+        out: list = []
+        spendable = plan.cash - self.reserve(me)
         if spendable <= 0:
-            return
+            return out
         scale = self.p["buy_target_scale"]
         wants = {}
-        if me.has("factory"):
+        if plan.has("factory"):
             if me.stocks["copper"] < 4.0:
                 wants["copper"] = 6.0 * scale
             if me.stocks["lithium"] < 1.5:
                 wants["lithium"] = 2.5 * scale
-        if me.has("plant") and me.stocks["component"] < 12:
+        if plan.has("plant") and me.stocks["component"] < 12:
             wants["component"] = 20.0 * scale
-        if me.has("assembly") and me.stocks["device"] < 10:
+        if plan.has("assembly") and me.stocks["device"] < 10:
             wants["device"] = 12.0 * scale
         budget = spendable * self.p["buy_budget_frac"]
         for c, q in wants.items():
             cost = q * world.prices[c]
             if cost <= budget:
-                act.buy(c, q)
+                out.append(Buy(c, q))
                 budget -= cost
+        return out
 
     def buffer(self, me: CompanyView, commodity: str) -> float:
         """Quanto manter em estoque para o próprio jusante."""
+        return self._buffer_kinds(me, commodity, None)
+
+    def _buffer_kinds(self, me: CompanyView, commodity: str,
+                      kinds) -> float:
+        """O buffer, com os ``has()`` lidos de ``kinds`` (a sombra)
+        quando dados — dentro de uma decisão declarativa, o buffer
+        enxerga as construções já declaradas neste tick."""
+        has = me.has if kinds is None else (lambda k: k in kinds)
         v = (0.5 + me.traits["vertical"]) * self.p["buffer_scale"]
-        if commodity in chain.RAW_TO_REFINED and me.has("refinery"):
+        if commodity in chain.RAW_TO_REFINED and has("refinery"):
             return 220.0 * v
-        if commodity in ("copper", "lithium") and me.has("factory"):
+        if commodity in ("copper", "lithium") and has("factory"):
             return (6.0 if commodity == "copper" else 2.0) * v
-        if commodity == "component" and me.has("plant"):
+        if commodity == "component" and has("plant"):
             return 30.0 * v
-        if commodity == "device" and me.has("assembly"):
+        if commodity == "device" and has("assembly"):
             return 15.0 * v
         return 0.0
 
-    def plan_sells(self, obs: Observation) -> None:
-        me, act = obs.me, obs.act
+    def plan_sells(self, obs: Observation,
+                   plan: Plan | None = None) -> list:
+        """Ofertas do tick como intenções (fatia 3); o buffer de cada
+        commodity é o da sombra (construções deste tick contam)."""
+        me = obs.me
+        if plan is None:
+            plan = Plan.of(me)
+        out: list = []
         for c in chain.COMMODITIES:
-            surplus = me.stocks[c] - self.buffer(me, c)
+            surplus = me.stocks[c] - self._buffer_kinds(me, c,
+                                                        plan.kinds)
             if surplus > 0.01:
-                act.offer(c, surplus)
+                out.append(Offer(c, surplus))
+        return out
 
-    def use_tools(self, obs: Observation) -> None:
-        me, world, act = obs.me, obs.world, obs.act
-        if not me.has("plant"):
-            return
+    def use_tools(self, obs: Observation,
+                  plan: Plan | None = None) -> list:
+        """Ferramentas simuladas como intenções (fatia 3). Os
+        sorteios acontecem AQUI, ao planejar, na mesma ordem e com
+        os mesmos curtos-circuitos da era imperativa — executar a
+        intenção não sorteia nada, então o fluxo do RNG do episódio
+        não muda um draw. Os testes de caixa leem a sombra."""
+        me, world = obs.me, obs.world
+        if plan is None:
+            plan = Plan.of(me)
+        out: list = []
+        if not plan.has("plant"):
+            return out
         t = me.traits
         tools = me.tools
         if not tools.insta_active(world.tick) \
                 and obs.rng.random() < t["marketing"] * 0.45 \
                 * self.p["insta_prob_scale"] \
-                and me.cash - self.reserve(me) > insta_campaign_cost():
-            act.spend(insta_campaign_cost(), reason="tools")
-            act.set_tool("insta", until=world.tick + INSTA_DURATION_TICKS,
-                         strength=1.0)
-            act.narrate("tool",
-                        f"{me.name} dispara uma campanha no InstaSim "
-                        f"(US$ {insta_campaign_cost():,.0f}) para empurrar "
-                        f"seus dispositivos.")
+                and plan.cash - self.reserve(me) > insta_campaign_cost():
+            out.append(Spend(insta_campaign_cost(), reason="tools"))
+            out.append(SetTool("insta",
+                               until=world.tick + INSTA_DURATION_TICKS,
+                               strength=1.0))
+            out.append(Narrate(Narration(
+                "tool",
+                f"{me.name} dispara uma campanha no InstaSim "
+                f"(US$ {insta_campaign_cost():,.0f}) para empurrar "
+                f"seus dispositivos.")))
+            plan.spend(insta_campaign_cost())
         if not tools.zap_active(world.tick) and me.stocks["device"] > 20 \
                 and obs.rng.random() < t["marketing"] * 0.35 \
                 * self.p["zap_prob_scale"] \
-                and me.cash - self.reserve(me) > zap_campaign_cost():
-            act.spend(zap_campaign_cost(), reason="tools")
-            act.set_tool("zap", until=world.tick + ZAP_DURATION_TICKS)
-            act.narrate("tool",
-                        f"{me.name} abre canal de vendas no ZapSim "
-                        f"(US$ {zap_campaign_cost():,.0f}).")
+                and plan.cash - self.reserve(me) > zap_campaign_cost():
+            out.append(Spend(zap_campaign_cost(), reason="tools"))
+            out.append(SetTool("zap",
+                               until=world.tick + ZAP_DURATION_TICKS))
+            out.append(Narrate(Narration(
+                "tool",
+                f"{me.name} abre canal de vendas no ZapSim "
+                f"(US$ {zap_campaign_cost():,.0f}).")))
+            plan.spend(zap_campaign_cost())
         # VidSim: ferramenta de elo alto — quem já vende dispositivo e tem
         # marketing forte produz vídeo (decisão por limiar, sem sorteio:
         # é capex de marca, não impulso). Custa ~7x o InstaSim e dura 2x.
         if not tools.vid_active(world.tick) and t["marketing"] >= 0.6 \
                 and me.stocks["device"] > 10 \
-                and me.cash - self.reserve(me) > vid_campaign_cost():
-            act.spend(vid_campaign_cost(), reason="tools")
-            act.set_tool("vid", until=world.tick + VID_DURATION_TICKS)
-            act.narrate("tool",
-                        f"{me.name} estreia campanha em vídeo no "
-                        f"VidSim (US$ {vid_campaign_cost():,.0f}) para "
-                        f"empurrar seus produtos de elo alto.")
+                and plan.cash - self.reserve(me) > vid_campaign_cost():
+            out.append(Spend(vid_campaign_cost(), reason="tools"))
+            out.append(SetTool("vid",
+                               until=world.tick + VID_DURATION_TICKS))
+            out.append(Narrate(Narration(
+                "tool",
+                f"{me.name} estreia campanha em vídeo no "
+                f"VidSim (US$ {vid_campaign_cost():,.0f}) para "
+                f"empurrar seus produtos de elo alto.")))
+            plan.spend(vid_campaign_cost())
         # LojaSim: quem tem dispositivo parado abre prateleira no
         # marketplace e aceita pagar a comissão sobre o que vender.
         if not tools.loja_active(world.tick) \
                 and me.stocks["device"] >= 15 \
-                and me.cash - self.reserve(me) > loja_store_cost():
-            act.spend(loja_store_cost(), reason="tools")
-            act.set_tool("loja", until=world.tick + LOJA_DURATION_TICKS)
-            act.narrate("tool",
-                        f"{me.name} abre loja no LojaSim "
-                        f"(US$ {loja_store_cost():,.0f} + "
-                        f"{LOJA_FEE_PCT:.0%} por venda).")
+                and plan.cash - self.reserve(me) > loja_store_cost():
+            out.append(Spend(loja_store_cost(), reason="tools"))
+            out.append(SetTool("loja",
+                               until=world.tick + LOJA_DURATION_TICKS))
+            out.append(Narrate(Narration(
+                "tool",
+                f"{me.name} abre loja no LojaSim "
+                f"(US$ {loja_store_cost():,.0f} + "
+                f"{LOJA_FEE_PCT:.0%} por venda).")))
+            plan.spend(loja_store_cost())
+        return out
 
 
 
@@ -456,6 +565,43 @@ def _resolve_world(world_data: bool):
         except Exception:
             pass
     return copy.deepcopy(DEPOSITS), list(CITIES), "builtin"
+
+
+def _is_number(v) -> bool:
+    """Número real finito (bool não é número aqui)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) \
+        and math.isfinite(v)
+
+
+def _checked_cell(cell, what: str) -> tuple:
+    """A célula de uma intenção, normalizada para tupla de 2
+    números — ou ``IntentionError``."""
+    if not isinstance(cell, (list, tuple)) or len(cell) != 2 \
+            or not all(_is_number(c) for c in cell):
+        raise IntentionError(f"{what}: célula inválida: {cell!r}")
+    return (cell[0], cell[1])
+
+
+def _checked_narration(n, what: str) -> None:
+    """Narração declarada válida: ``Narration`` com kind/text de
+    texto e ``extra`` JSON puro (o mesmo crivo do ``_jsonify``)."""
+    if n is None:
+        return
+    if not isinstance(n, Narration):
+        raise IntentionError(f"{what}: não é uma Narration: {n!r}")
+    if not isinstance(n.kind, str) or not isinstance(n.text, str):
+        raise IntentionError(f"{what}: narração sem kind/text")
+    try:
+        extra = dict(n.extra)
+    except (TypeError, ValueError) as exc:
+        raise IntentionError(f"{what}: extra inválido") from exc
+    if not all(isinstance(k, str) for k in extra):
+        raise IntentionError(f"{what}: extra com chave não-texto")
+    try:
+        _jsonify(extra)
+    except TypeError as exc:
+        raise IntentionError(
+            f"{what}: extra não serializável: {exc}") from exc
 
 
 class Engine:
@@ -661,7 +807,10 @@ class Engine:
     # compatibilidade: constroem a Observation da empresa e delegam
     # para a política instalada (por padrão a HeuristicPolicy). A
     # política nunca recebe o motor nem a empresa crua (guarda v2,
-    # docs/OBSERVATION-SPEC.md). Trocar a política não toca o motor.
+    # docs/OBSERVATION-SPEC.md) e, desde a fatia 3, não executa
+    # nada: decide devolve intenções declarativas e quem as aplica
+    # é _apply_intentions, com validação total antes da execução.
+    # Trocar a política não toca o motor.
     def _reserve(self, comp: Company) -> float:
         return self.policy.reserve(build_company_view(self, comp))
 
@@ -670,27 +819,188 @@ class Engine:
         comp._buys = {}
         if not comp.alive:
             return
-        self.policy.decide(build_observation(self, comp))
+        obs = build_observation(self, comp, sealed_act=True)
+        self._apply_intentions(comp, self.policy.decide(obs))
 
     def _pick_deposit(self, comp: Company):
-        return self.policy.pick_deposit(build_observation(self, comp))
+        return self.policy.pick_deposit(
+            build_observation(self, comp, sealed_act=True))
 
     def _build_downstream(self, comp: Company, spendable: float) -> bool:
-        return self.policy.build_downstream(
-            build_observation(self, comp), spendable)
+        obs = build_observation(self, comp, sealed_act=True)
+        built, intentions = self.policy.build_downstream(obs, spendable)
+        self._apply_intentions(comp, intentions)
+        return built
 
     def _plan_buys(self, comp: Company) -> None:
-        return self.policy.plan_buys(build_observation(self, comp))
+        obs = build_observation(self, comp, sealed_act=True)
+        self._apply_intentions(comp, self.policy.plan_buys(obs))
 
     def _buffer(self, comp: Company, commodity: str) -> float:
         return self.policy.buffer(build_company_view(self, comp),
                                   commodity)
 
     def _plan_sells(self, comp: Company) -> None:
-        return self.policy.plan_sells(build_observation(self, comp))
+        obs = build_observation(self, comp, sealed_act=True)
+        self._apply_intentions(comp, self.policy.plan_sells(obs))
 
     def _use_tools(self, comp: Company) -> None:
-        return self.policy.use_tools(build_observation(self, comp))
+        obs = build_observation(self, comp, sealed_act=True)
+        self._apply_intentions(comp, self.policy.use_tools(obs))
+
+    # -- intenções declarativas (fatia 3): validação e execução ------
+    def _validate_intentions(self, comp: Company, intentions) -> list:
+        """Confere a lista INTEIRA da decisão e devolve as intenções
+        normalizadas — ou levanta ``IntentionError`` sem executar
+        nada (atomicidade por decisão: decisão inválida não toca o
+        mundo). O vocabulário e os alvos são os da focal: instalação
+        de rival, claim de célula alheia, commodity inexistente e
+        objeto forjado (que não seja instância das classes de
+        intenção) são rejeitados aqui, não na execução."""
+        if intentions is None \
+                or not isinstance(intentions, (list, tuple)):
+            raise IntentionError(
+                "decide(obs) precisa devolver uma lista de intenções "
+                "(mundo.intentions): o contrato imperativo acabou na "
+                "fatia 3 — verbos não executam durante a decisão "
+                "(docs/OBSERVATION-SPEC.md §4)")
+        deposit_cells = {d.cell for d in self.deposits}
+        own = set(comp.facilities)
+        out = []
+        for it in intentions:
+            if not isinstance(it, INTENTION_TYPES):
+                raise IntentionError(
+                    f"objeto não é uma intenção declarada: {it!r}")
+            if isinstance(it, Spend):
+                if not _is_number(it.amount) or it.amount < 0:
+                    raise IntentionError(
+                        f"spend inválido: {it.amount!r}")
+                if not isinstance(it.reason, str):
+                    raise IntentionError("spend sem reason de texto")
+            elif isinstance(it, Probe):
+                if it.deposit not in self._deposit_by_name:
+                    raise IntentionError(
+                        f"probe de depósito desconhecido: "
+                        f"{it.deposit!r}")
+                _checked_narration(it.on_rich, "probe.on_rich")
+                _checked_narration(it.on_poor, "probe.on_poor")
+                if not _is_number(it.rich_threshold) \
+                        or not _is_number(it.poor_threshold):
+                    raise IntentionError("probe com limiar inválido")
+            elif isinstance(it, RegisterClaim):
+                cell = _checked_cell(it.cell, "register_claim")
+                if cell not in deposit_cells:
+                    raise IntentionError(
+                        f"claim fora de célula de depósito: {cell!r}")
+                owner = self.claimed_by.get(cell)
+                if owner is not None and owner != comp.cid:
+                    raise IntentionError(
+                        f"claim de célula já reivindicada por rival: "
+                        f"{cell!r}")
+                it = replace(it, cell=cell)
+            elif isinstance(it, BuildFacility):
+                if it.kind not in chain.FACILITIES:
+                    raise IntentionError(
+                        f"construção de tipo desconhecido: {it.kind!r}")
+                cell = _checked_cell(it.cell, "build_facility")
+                if it.deposit is not None:
+                    dep = self._deposit_by_name.get(it.deposit)
+                    if dep is None:
+                        raise IntentionError(
+                            f"construção em depósito desconhecido: "
+                            f"{it.deposit!r}")
+                    if dep.cell != cell:
+                        raise IntentionError(
+                            "construção: a célula não é a do depósito")
+                _checked_narration(it.narration,
+                                   "build_facility.narration")
+                it = replace(it, cell=cell)
+            elif isinstance(it, Narrate):
+                if it.narration is None:
+                    raise IntentionError("narrate sem narração")
+                _checked_narration(it.narration, "narrate")
+            elif isinstance(it, NoteLink):
+                if not isinstance(it.stage, int) \
+                        or isinstance(it.stage, bool) \
+                        or not 1 <= it.stage <= 5:
+                    raise IntentionError(
+                        f"note_link com elo inválido: {it.stage!r}")
+            elif isinstance(it, (RepairFacility, MaintainFacility,
+                                 OverhaulFacility)):
+                if it.facility_id not in own:
+                    raise IntentionError(
+                        f"intenção sobre instalação que não é da "
+                        f"empresa: {it.facility_id!r}")
+            elif isinstance(it, (Buy, Offer)):
+                if it.commodity not in chain.COMMODITIES:
+                    raise IntentionError(
+                        f"commodity fora do vocabulário: "
+                        f"{it.commodity!r}")
+                if not _is_number(it.qty) or it.qty < 0:
+                    raise IntentionError(
+                        f"quantidade inválida: {it.qty!r}")
+            elif isinstance(it, SetTool):
+                if it.tool not in ("insta", "zap", "vid", "loja"):
+                    raise IntentionError(
+                        f"ferramenta desconhecida: {it.tool!r}")
+                if not isinstance(it.until, int) \
+                        or isinstance(it.until, bool):
+                    raise IntentionError(
+                        f"set_tool com until inválido: {it.until!r}")
+                if it.strength is not None \
+                        and not _is_number(it.strength):
+                    raise IntentionError(
+                        "set_tool com strength inválido")
+            out.append(it)
+        return out
+
+    def _apply_intentions(self, comp: Company, intentions) -> None:
+        """Valida a decisão inteira e só então a executa, em ordem,
+        despachando cada intenção para o verbo do ``Actuator`` —
+        a ordem de execução é a ordem declarada, que é a ordem de
+        mutação de sempre (fatia 3, docs/OBSERVATION-SPEC.md §4)."""
+        act = Actuator(self, comp)
+        for it in self._validate_intentions(comp, intentions):
+            if isinstance(it, Spend):
+                act.spend(it.amount, reason=it.reason)
+            elif isinstance(it, Probe):
+                grade, _size = act.probe(it.deposit)
+                narration = None
+                if grade >= it.rich_threshold:
+                    narration = it.on_rich
+                elif grade <= it.poor_threshold:
+                    narration = it.on_poor
+                if narration is not None:
+                    act.narrate(narration.kind, narration.text,
+                                **narration.extra_dict())
+            elif isinstance(it, RegisterClaim):
+                act.register_claim(it.cell)
+            elif isinstance(it, BuildFacility):
+                fac = act.build_facility(it.kind, it.cell,
+                                         deposit=it.deposit)
+                if it.narration is not None:
+                    extra = it.narration.extra_dict()
+                    extra["fid"] = fac.id
+                    act.narrate(it.narration.kind, it.narration.text,
+                                **extra)
+            elif isinstance(it, Narrate):
+                n = it.narration
+                act.narrate(n.kind, n.text, **n.extra_dict())
+            elif isinstance(it, NoteLink):
+                act.note_link(it.stage)
+            elif isinstance(it, RepairFacility):
+                act.repair(it.facility_id)
+            elif isinstance(it, MaintainFacility):
+                act.maintain(it.facility_id)
+            elif isinstance(it, OverhaulFacility):
+                act.overhaul(it.facility_id)
+            elif isinstance(it, Buy):
+                act.buy(it.commodity, it.qty)
+            elif isinstance(it, Offer):
+                act.offer(it.commodity, it.qty)
+            elif isinstance(it, SetTool):
+                act.set_tool(it.tool, until=it.until,
+                             strength=it.strength)
 
     def _note_link(self, comp: Company, stage: int) -> None:
         names = {1: "extração", 2: "refino", 3: "componentes",
