@@ -135,3 +135,117 @@ def test_tools_v1_state_roundtrip_and_v0_compat():
     back0 = Engine.from_state(state)
     assert back0.companies[0].tools.vid_until == -1
     assert back0.companies[0].tools.loja_until == -1
+
+
+# --------------------------------------------------------------------- #
+# 3) Crônica rica: recordes, rivalidade, causa de falência, resumo de era
+# --------------------------------------------------------------------- #
+from mundo.chronicle import replay
+from mundo.engine import HeuristicPolicy
+
+
+def test_first_link_becomes_permanent_record():
+    eng = Engine(seed=7, n_companies=8, world_data=False)
+    eng.run(24)
+    events = eng.chronicle.to_json()
+    links = [e for e in events if e["kind"] == "chain_link"]
+    records = [e for e in events
+               if e["kind"] == "record" and e["data"].get("record") == "first_link"]
+    assert links, "o smoke precisa produzir ao menos um marco de cadeia"
+    assert [r["data"]["stage"] for r in records] == \
+        [l["data"]["stage"] for l in links]
+    for r in records:
+        assert r["data"]["era"] == 1
+        assert eng.first_link[r["data"]["stage"]] == r["company"]
+
+
+def test_rivalry_narrated_on_leadership_change():
+    eng = Engine(seed=7, n_companies=8, world_data=False)
+    a, b = eng.companies[0], eng.companies[1]
+    eng._cash_leader = b.cid
+    eng._stage_leader = b.cid
+    a.cash = 10**9
+    a.add_facility("plant", (10, 10))          # elo 4 contra elo 0 de b
+    eng._note_rivalry()
+    riv = [e for e in eng.chronicle.to_json() if e["kind"] == "rivalry"]
+    assert {e["data"]["metric"] for e in riv} == {"cash", "stage"}
+    for e in riv:
+        assert e["data"]["to_cid"] == a.cid and e["data"]["from_cid"] == b.cid
+        assert "RIVALIDADE" in e["text"]
+    # sem nova troca, sem nova narração
+    n = len(eng.chronicle.events)
+    eng._note_rivalry()
+    assert len(eng.chronicle.events) == n
+
+
+class CapexSuicidePolicy(HeuristicPolicy):
+    """Estoura o caixa da empresa 0 construindo (reason='build') — a
+    falência nasce dentro do log e a causa tem que sair 'capex'."""
+
+    def decide(self, engine, comp):
+        super().decide(engine, comp)
+        if comp.cid == 0 and engine.tick >= 10 and comp.facilities:
+            engine._spend(comp, comp.cash + 5_000_000.0, reason="build")
+
+
+def test_bankruptcy_with_probable_cause():
+    eng = Engine(seed=7, n_companies=8, policy=CapexSuicidePolicy(),
+                 world_data=False)
+    eng.run(24)
+    dead = [e for e in eng.chronicle.to_json() if e["kind"] == "bankruptcy"]
+    assert dead, "a política suicida precisa quebrar alguém"
+    ev = dead[0]
+    assert ev["data"]["cause"] == "capex"
+    assert "Causa provável" in ev["text"] and "capex" not in ev["text"]
+
+
+def test_era_summary_every_60_ticks():
+    eng = Engine(seed=7, n_companies=8, world_data=False)
+    eng.run(60)
+    sums = [e for e in eng.chronicle.to_json() if e["kind"] == "era_summary"]
+    assert len(sums) == 1
+    s = sums[0]
+    assert s["tick"] == 60 and s["data"]["years"] == 5
+    assert s["data"]["cash_leader"] and s["data"]["stage_leader"]
+    assert "RESUMO DA ERA" in s["text"] and "falências" in s["text"]
+    eng2 = Engine(seed=7, n_companies=8, world_data=False)
+    eng2.run(120)
+    assert len([e for e in eng2.chronicle.to_json()
+                if e["kind"] == "era_summary"]) == 2
+
+
+def _assert_replay_matches(eng, res):
+    proj = replay(eng.chronicle.to_json())
+    got = {r["name"]: r for r in proj["scoreboard"]}
+    assert set(got) == {r["name"] for r in res["scoreboard"]}
+    for row in res["scoreboard"]:
+        p = got[row["name"]]
+        assert p["alive"] == row["alive"] and p["stage"] == row["stage"]
+        assert p["facilities"] == row["facilities"]
+        assert p["cash"] == pytest.approx(row["cash"], abs=1e-3)
+    owners = {fac["id"]: comp.name
+              for comp in eng.companies for fac in comp.facilities.values()}
+    assert proj["facility_owners"] == owners
+
+
+def test_replay_with_rich_chronicle_72_ticks():
+    # 72 ticks cruzam o resumo de era (60) e exercitam rivalidade,
+    # recordes e as ferramentas v1 — o replay continua fechando.
+    eng = Engine(seed=7, n_companies=8)
+    res = eng.run(72)
+    kinds = {e["kind"] for e in eng.chronicle.to_json()}
+    assert "era_summary" in kinds and "record" in kinds
+    _assert_replay_matches(eng, res)
+
+
+def test_snapshot_restore_v1_rich_chronicle():
+    import json
+    eng = Engine(seed=7, n_companies=8)
+    for _ in range(30):
+        eng.step()
+    state = json.loads(json.dumps(eng.state_dict()))
+    resumed = Engine.from_state(state).run(42)
+    ref = Engine(seed=7, n_companies=8).run(72)
+    assert resumed["scoreboard"] == ref["scoreboard"]
+    assert resumed["frames"] == ref["frames"]
+    assert resumed["chronicle"] == ref["chronicle"]

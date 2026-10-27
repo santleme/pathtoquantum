@@ -363,6 +363,15 @@ class Engine:
         self.demand_factors: dict[str, tuple[float, int]] = {}
         self.god_events = sorted(god_events or [], key=lambda e: e["tick"])
         self.first_link: dict[int, str] = {}
+        # Crônica rica (v1): líderes vigentes (rivalidade), produção de
+        # supercomputadores por empresa e o histórico de gastos por
+        # motivo de cada uma (matéria-prima da "causa provável" da
+        # falência — por motivo porque ops roda todo tick e apagaria o
+        # rastro do capex se fosse só "o último gasto").
+        self._cash_leader: int | None = None
+        self._stage_leader: int | None = None
+        self._super_by_cid: dict[int, float] = {}
+        self._spend_hist: dict[int, dict[str, tuple[float, int]]] = {}
         self.frames: list[dict] = []
         # Ledger (conservação) -------------------------------------------
         self.ledger_mass = {c: {"extracted": 0.0, "produced": 0.0,
@@ -403,6 +412,7 @@ class Engine:
         comp.cash -= amount
         self.money_out += amount
         self._flow(comp.cid, f"spend_{reason}", -amount)
+        self._spend_hist.setdefault(comp.cid, {})[reason] = (amount, self.tick)
 
     def _emit_flows(self, cash_start: dict[int, float]) -> None:
         """Fecha o tick no log: um evento "flows" com o delta de caixa de
@@ -503,7 +513,59 @@ class Engine:
             self.first_link[stage] = comp.name
             self.chronicle.add(self.tick, "chain_link",
                                f"MARCO DA CADEIA: {comp.name} é a primeira a "
-                               f"dominar o elo de {names[stage]}.", comp.name)
+                               f"dominar o elo de {names[stage]}.", comp.name,
+                               stage=stage, era=1)
+            # Marco permanente da era: a primeira vez em cada elo vira
+            # recorde do mundo — ninguém apaga um recorde.
+            if stage == 5:
+                text = (f"MARCO DE ERA: {comp.name} fecha a ERA 1 (The Path "
+                        f"to the Supercomputer) — é a primeira a dominar o "
+                        f"elo de supercomputador. Recorde permanente do mundo.")
+            else:
+                text = (f"RECORDE: {comp.name} é a primeira a dominar o elo "
+                        f"de {names[stage]} — marco permanente da Era 1.")
+            self.chronicle.add(self.tick, "record", text, comp.name,
+                               stage=stage, era=1, record="first_link")
+
+    # -- rivalidade ---------------------------------------------------------
+    def _leader(self, key) -> Company | None:
+        alive = [c for c in self.companies if c.alive]
+        if not alive:
+            return None
+        return max(alive, key=lambda c: (key(c), -c.cid))
+
+    def _note_rivalry(self) -> None:
+        """Narra trocas de liderança (caixa e cadeia): ultrapassagem é
+        história. Líderes são estado do motor (serializados): retomar
+        uma corrida não reconta nem perde rivalidades."""
+        cash_leader = self._leader(lambda c: c.cash)
+        if cash_leader is not None:
+            if self._cash_leader is None:
+                self._cash_leader = cash_leader.cid
+            elif cash_leader.cid != self._cash_leader:
+                old = self.companies[self._cash_leader]
+                self.chronicle.add(
+                    self.tick, "rivalry",
+                    f"RIVALIDADE: {cash_leader.name} ultrapassa {old.name} e "
+                    f"assume a liderança em caixa (US$ "
+                    f"{cash_leader.cash/1e6:.1f}M contra US$ "
+                    f"{old.cash/1e6:.1f}M).", cash_leader.name,
+                    metric="cash", from_cid=old.cid, to_cid=cash_leader.cid)
+                self._cash_leader = cash_leader.cid
+        stage_leader = self._leader(lambda c: c.chain_stage())
+        if stage_leader is not None and stage_leader.chain_stage() > 0:
+            if self._stage_leader is None:
+                self._stage_leader = stage_leader.cid
+            elif stage_leader.cid != self._stage_leader:
+                old = self.companies[self._stage_leader]
+                self.chronicle.add(
+                    self.tick, "rivalry",
+                    f"RIVALIDADE: {stage_leader.name} ultrapassa {old.name} "
+                    f"na cadeia e assume a liderança (elo "
+                    f"{stage_leader.chain_stage()} contra elo "
+                    f"{old.chain_stage()}).", stage_leader.name,
+                    metric="stage", from_cid=old.cid, to_cid=stage_leader.cid)
+                self._stage_leader = stage_leader.cid
 
     # -- produção -----------------------------------------------------------
     def _produce(self, comp: Company) -> None:
@@ -556,6 +618,8 @@ class Engine:
                 self._spend(comp, units * cost, reason="ops")
                 if product == "supercomputer":
                     self.total_supercomputers += units
+                    self._super_by_cid[comp.cid] = \
+                        self._super_by_cid.get(comp.cid, 0.0) + units
                     self.chronicle.add(self.tick, "record",
                                        f"{comp.name} entrega um SUPERCOMPUTADOR "
                                        f"montado por conta própria.", comp.name)
@@ -655,14 +719,37 @@ class Engine:
                                          max(base * 0.3, price * factor))
 
     # -- falência / aquisição ---------------------------------------------------
+    def _bankruptcy_cause(self, comp: Company) -> tuple[str, str]:
+        """Causa provável da morte, inferida do estado no momento da
+        quebra (último gasto, operação, estoque). Determinística: é
+        função pura do estado serializável do motor."""
+        hist = self._spend_hist.get(comp.cid, {})
+        build = hist.get("build")
+        if build and self.tick - build[1] <= 6 and build[0] >= 2_000_000:
+            return "capex", ("expandiu rápido demais — o capex recente "
+                             "devorou o caixa")
+        acq = hist.get("acquisition")
+        if acq and self.tick - acq[1] <= 6:
+            return "aquisicao", "alavancou-se comprando os ativos de uma rival"
+        if not comp.facilities:
+            return "sem_operacao", "queimou o caixa sem montar operação"
+        stock_value = sum(comp.stocks[c] * chain.BASE_PRICES[c]
+                          for c in chain.COMMODITIES)
+        if stock_value < 50_000:
+            return "operacao", ("operou no prejuízo — custos acima da "
+                                "receita e estoque parado")
+        return "caixa", "ficou sem caixa"
+
     def _check_bankruptcy(self, comp: Company) -> None:
         if not comp.alive or comp.cash >= 0:
             return
         comp.alive = False
+        cause, phrase = self._bankruptcy_cause(comp)
         self.chronicle.add(self.tick, "bankruptcy",
                            f"FALÊNCIA: {comp.name} quebra com "
-                           f"US$ {comp.cash/1e6:.1f}M de rombo.", comp.name,
-                           cid=comp.cid)
+                           f"US$ {comp.cash/1e6:.1f}M de rombo. "
+                           f"Causa provável: {phrase}.", comp.name,
+                           cid=comp.cid, cause=cause, cash=comp.cash)
         buyers = [c for c in self.companies
                   if c.alive and c.cash > 12_000_000]
         if buyers and comp.facilities:
@@ -729,10 +816,47 @@ class Engine:
         for comp in self.companies:
             self._produce(comp)
         self._market()
+        self._note_rivalry()
         self._emit_flows(cash_start)
         self.tick += 1
         if self.tick % 12 == 0:
             self._snapshot()
+        if self.tick % 60 == 0:
+            self._era_summary()
+
+    def _era_summary(self) -> None:
+        """RESUMO DE ERA: a cada 60 ticks (5 anos), a crônica fecha um
+        capítulo com os líderes por categoria — a retrospectiva que o
+        Deus lê sem precisar caçar evento por evento."""
+        years = self.tick // 12
+        alive = [c for c in self.companies if c.alive]
+        richest = max(self.companies, key=lambda c: (c.cash, -c.cid))
+        top = max(self.companies, key=lambda c: (c.chain_stage(), -c.cid))
+        most_fac = max(self.companies,
+                       key=lambda c: (len(c.facilities), -c.cid))
+        top_producer = None
+        if self._super_by_cid:
+            top_producer = self.companies[max(
+                self._super_by_cid,
+                key=lambda cid: (self._super_by_cid[cid], -cid))]
+        bankruptcies = sum(1 for e in self.chronicle.events
+                           if e.kind == "bankruptcy")
+        super_txt = f"supercomputadores entregues: {int(self.total_supercomputers)}"
+        if top_producer is not None:
+            super_txt += f" (maior produtor: {top_producer.name})"
+        text = (f"RESUMO DA ERA ({years} anos de mundo): {richest.name} "
+                f"lidera em caixa (US$ {richest.cash/1e6:.1f}M); {top.name} "
+                f"lidera a cadeia (elo {top.chain_stage()}); {most_fac.name} "
+                f"tem mais instalações ({len(most_fac.facilities)}); "
+                f"{super_txt}; falências: {bankruptcies}; empresas vivas: "
+                f"{len(alive)}/{len(self.companies)}.")
+        self.chronicle.add(self.tick, "era_summary", text, None,
+                           years=years, cash_leader=richest.name,
+                           stage_leader=top.name,
+                           supercomputers=int(self.total_supercomputers),
+                           top_producer=(top_producer.name
+                                         if top_producer else None),
+                           bankruptcies=bankruptcies, alive=len(alive))
 
     def run(self, ticks: int) -> dict:
         for _ in range(ticks):
@@ -792,6 +916,11 @@ class Engine:
                                for k, (f, until) in self.demand_factors.items()},
             "god_events": copy.deepcopy(self.god_events),
             "first_link": {str(k): v for k, v in self.first_link.items()},
+            "leaders": {"cash": self._cash_leader,
+                        "stage": self._stage_leader},
+            "super_by_cid": {str(k): v for k, v in self._super_by_cid.items()},
+            "spend_hist": {str(cid): {r: [a, t] for r, (a, t) in h.items()}
+                           for cid, h in self._spend_hist.items()},
             "frames": copy.deepcopy(self.frames),
             "chronicle": {"start_year": self.chronicle.start_year,
                           "events": [asdict(e) for e in self.chronicle.events]},
@@ -837,6 +966,13 @@ class Engine:
         eng.god_events = sorted(copy.deepcopy(state["god_events"]),
                                 key=lambda e: e["tick"])
         eng.first_link = {int(k): v for k, v in state["first_link"].items()}
+        leaders = state.get("leaders", {})          # states do v0 não têm
+        eng._cash_leader = leaders.get("cash")
+        eng._stage_leader = leaders.get("stage")
+        eng._super_by_cid = {int(k): v for k, v
+                             in state.get("super_by_cid", {}).items()}
+        eng._spend_hist = {int(cid): {r: (v[0], v[1]) for r, v in h.items()}
+                           for cid, h in state.get("spend_hist", {}).items()}
         eng.frames = copy.deepcopy(state["frames"])
         eng.ledger_mass = copy.deepcopy(state["ledger_mass"])
         eng.initial_cash = state["initial_cash"]

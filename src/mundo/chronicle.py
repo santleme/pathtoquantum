@@ -20,7 +20,9 @@ def sim_date(tick: int, start_year: int = 2027) -> str:
 class Event:
     tick: int
     kind: str            # founding, probe, mine, facility, chain_link, sale,
-                         # bankruptcy, acquisition, god, record, tool, end
+                         # bankruptcy, acquisition, god, record, tool, end,
+                         # rivalry, era_summary (v1 — narrativos: o replay
+                         # os ignora, o dinheiro anda só nos "flows")
     text: str
     company: str | None = None
     data: dict = field(default_factory=dict)
