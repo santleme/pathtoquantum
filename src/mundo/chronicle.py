@@ -24,7 +24,11 @@ class Event:
                          # rivalry, era_summary (v1 — narrativos: o replay
                          # os ignora, o dinheiro anda só nos "flows"),
                          # market_regime, price_record (B1 — idem: viradas
-                         # de regime e recordes de preço, só transições)
+                         # de regime e recordes de preço, só transições),
+                         # politics (B3 — eventos políticos nomeados em
+                         # data["event"]: election, royalty_reform,
+                         # export_restriction, state_jv, judicial_halt,
+                         # subsidy, disaster; idem narrativo)
     text: str
     company: str | None = None
     data: dict = field(default_factory=dict)

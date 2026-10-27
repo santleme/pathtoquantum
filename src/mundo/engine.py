@@ -12,7 +12,7 @@ import random
 
 from dataclasses import asdict
 
-from . import chain, marketdata
+from . import chain, countrydata, marketdata
 from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, StockBook, make_companies
 from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
@@ -125,13 +125,19 @@ class HeuristicPolicy(Policy):
                     grade, _ = known
                     threshold = self.p["grade_thr_base"] \
                         - t["risk"] * self.p["grade_thr_risk"]
-                    cost = chain.CLAIM_COST + chain.FACILITIES["mine"]["cost"]
+                    # B3: capex no país paga o prêmio de risco-país
+                    # (1,0 com country_v2 desligado — bit-idêntico)
+                    mult = engine.capex_mult(engine.deposit_country(target))
+                    cost = (chain.CLAIM_COST
+                            + chain.FACILITIES["mine"]["cost"]) * mult
                     if grade >= threshold and spendable > cost:
                         if target.cell not in comp.claimed:
-                            engine._spend(comp, chain.CLAIM_COST, reason="claim")
+                            engine._spend(comp, chain.CLAIM_COST * mult,
+                                          reason="claim")
                             comp.claimed.add(target.cell)
                             engine.claimed_by[target.cell] = comp.cid
-                        engine._spend(comp, chain.FACILITIES["mine"]["cost"],
+                        engine._spend(comp,
+                                      chain.FACILITIES["mine"]["cost"] * mult,
                                       reason="build")
                         fac = comp.add_facility("mine", target.cell)
                         fac["deposit"] = target.name
@@ -183,12 +189,16 @@ class HeuristicPolicy(Policy):
     def build_downstream(self, engine, comp: Company, spendable: float) -> bool:
         t = comp.traits
         hq_cell = engine._city_by_name[comp.hq_city].cell
+        # B3: jusante é construído no país da sede — mesmo prêmio de
+        # capex das minas (1,0 desligado — bit-idêntico)
+        mult = engine.capex_mult(engine.city_country(comp.hq_city))
 
         def affordable(kind):
-            return spendable > chain.FACILITIES[kind]["cost"]
+            return spendable > chain.FACILITIES[kind]["cost"] * mult
 
         def build(kind, text):
-            engine._spend(comp, chain.FACILITIES[kind]["cost"], reason="build")
+            engine._spend(comp, chain.FACILITIES[kind]["cost"] * mult,
+                          reason="build")
             fac = comp.add_facility(kind, hq_cell)
             engine.chronicle.add(engine.tick, "facility", text, comp.name,
                                  cid=comp.cid, fid=fac["id"], facility_kind=kind,
@@ -402,7 +412,9 @@ class Engine:
                  policy: Policy | None = None,
                  world_data: bool = True,
                  market_v2: bool = False,
-                 market_params: dict | None = None):
+                 market_params: dict | None = None,
+                 country_v2: bool = False,
+                 country_params: dict | None = None):
         self.policy = policy if policy is not None else HeuristicPolicy()
         self.rng = random.Random(seed)
         self.seed = seed
@@ -437,6 +449,25 @@ class Engine:
         self._tick_seasonal: dict[str, float] | None = None
         if market_v2:
             self._init_living_market(market_params)
+        # País/política (B3) + comércio externo (B4a) — Degrau 1, Fase 3.
+        # Desligado por padrão: nenhum estado, nenhum RNG, nenhum bloco
+        # serializado — goldens da Fase 1 bit-idênticos. Ligado, os
+        # parâmetros são DADO (mundo.countrydata) e S/e/τ viram séries
+        # PÚBLICAS; as probabilidades dos eventos, nunca.
+        self.country_v2 = country_v2
+        self._ctry: dict | None = None
+        self._countries: dict[str, dict] = {}
+        self._resources_by_country: dict | None = None
+        self._deposit_country_cache: dict[str, str] = {}
+        self._election_offset: dict[str, int] = {}
+        self._force_events: list[dict] = []
+        self._parity_surcharge: dict[str, float] = {}
+        self._capex_memo: dict = {}
+        self._royalty_due: dict[int, float] = {}
+        self.money_to_external = 0.0    # empresas -> resto do mundo (B4a)
+        self.money_from_external = 0.0  # resto do mundo -> empresas (B4a)
+        if country_v2:
+            self._init_countries(country_params)
         self.demand_factors: dict[str, tuple[float, int]] = {}
         self.god_events = sorted(god_events or [], key=lambda e: e["tick"])
         self.first_link: dict[int, str] = {}
@@ -455,6 +486,14 @@ class Engine:
                                 "consumed": 0.0, "wasted": 0.0,
                                 "sold_external": 0.0}
                             for c in chain.COMMODITIES}
+        if country_v2:
+            # B4a: massa que entra de fora do mapa é fonte externa
+            # nomeada — a conservação fecha INCLUINDO a conta "externo"
+            # (invariante da Fase 3, docs/DEGRAU1-DESIGN.md §4/B4a).
+            # A chave só existe com a flag ligada: desligado, o
+            # state_dict é byte-idêntico ao clássico.
+            for led in self.ledger_mass.values():
+                led["imported"] = 0.0
         self.initial_cash = sum(c.cash for c in self.companies)
         self.money_in = 0.0     # vendas às cidades
         self.money_out = 0.0    # construção, sondagem, operação, ferramentas
@@ -532,6 +571,7 @@ class Engine:
                 self.deposits.append(d)
                 self._deposit_by_name[d.name] = d
                 self.remaining[d.name] = d.size_t
+                self._resources_by_country = None   # B3: cache invalida
                 self.chronicle.add(self.tick, "god",
                                    f"DESCOBERTA: novo depósito de {d.resource} "
                                    f"anunciado — {d.name}.")
@@ -654,6 +694,10 @@ class Engine:
             cost = chain.OPERATING_COST[kind]
             if kind == "mine":
                 dep = self._deposit_by_name[fac["deposit"]]
+                if self.country_v2 \
+                        and self._is_halted(self.deposit_country(dep)):
+                    continue    # B3: paralisação no país — nem produz,
+                                # nem paga opex (a mina está parada)
                 crude = min(cap, self.remaining[dep.name])
                 if crude <= 0:
                     continue
@@ -663,7 +707,8 @@ class Engine:
                 comp.stocks.add(chain.COMMODITY_INDEX[dep.resource], payable)
                 self.ledger_mass[dep.resource]["extracted"] += payable
                 self.ledger_mass[dep.resource]["wasted"] += waste
-                self._spend(comp, crude * cost, reason="ops")
+                self._ops_spend(comp, self.deposit_country(dep),
+                                crude * cost)
             elif kind == "refinery":
                 budget = cap
                 for raw, refined in chain.RAW_TO_REFINED.items():
@@ -675,7 +720,8 @@ class Engine:
                     budget -= qty
                     self._convert(comp, raw, qty, refined,
                                   qty * chain.REFINE_YIELD)
-                    self._spend(comp, qty * cost, reason="ops")
+                    self._ops_spend(comp, self.city_country(comp.hq_city),
+                                    qty * cost)
             elif kind in ("factory", "plant", "assembly"):
                 product = {"factory": "component", "plant": "device",
                            "assembly": "supercomputer"}[kind]
@@ -693,7 +739,8 @@ class Engine:
                 comp.stocks.add(chain.COMMODITY_INDEX[product],
                                 units * recipe["out"])
                 self.ledger_mass[product]["produced"] += units * recipe["out"]
-                self._spend(comp, units * cost, reason="ops")
+                self._ops_spend(comp, self.city_country(comp.hq_city),
+                                units * cost)
                 if product == "supercomputer":
                     self.total_supercomputers += units
                     self._super_by_cid[comp.cid] = \
@@ -701,6 +748,11 @@ class Engine:
                     self.chronicle.add(self.tick, "record",
                                        f"{comp.name} entrega um SUPERCOMPUTADOR "
                                        f"montado por conta própria.", comp.name)
+        if self.country_v2:
+            # royalties do tick de produção, lançados de uma vez
+            due = self._royalty_due.pop(comp.cid, 0.0)
+            if due > 0.0:
+                self._spend(comp, due, reason="royalty")
 
     # -- mercado vivo (B1) ------------------------------------------------------
     def _init_living_market(self, params_override: dict | None) -> None:
@@ -823,10 +875,16 @@ class Engine:
                 * seasonal * self._demand_factor(commodity)
         else:
             city_q = 0.0
+        # B4a: restos e recebimentos rastreados para o participante
+        # externo — só quando importações são possíveis (preço acima
+        # da paridade); desligado ou dentro da banda, nada disto é lido
+        offered_left = {c.cid: q for c, q in offers}
+        city_sold = 0.0
+        received = {} if self.country_v2 \
+            and price > self._parity(commodity)[0] else None
         if total_supply > 0:
             # 1) comércio entre empresas (dinheiro interno: soma zero)
             sold_internal = 0.0
-            offered_left = {c.cid: q for c, q in offers}
             for buyer, want in sorted(buys, key=lambda x: x[0].cid):
                 if want <= 0:
                     continue
@@ -850,6 +908,9 @@ class Engine:
                     self._flow(buyer.cid, "trade_out", -share * price)
                     offered_left[seller.cid] -= share
                     sold_internal += share
+                    if received is not None:
+                        received[buyer.cid] = \
+                            received.get(buyer.cid, 0.0) + share
             # 2) demanda elástica das cidades sobre o que restou
             left_total = sum(offered_left.values())
             if city_q > 0 and left_total > 0:
@@ -882,20 +943,36 @@ class Engine:
                     self.money_in += qty * price
                     self.ledger_mass[commodity]["sold_external"] += qty
                     offered_left[seller.cid] -= qty
+                    city_sold += qty
                     if commodity == "device" \
                             and seller.tools.loja_active(self.tick):
                         fee = qty * price * LOJA_FEE_PCT
                         seller.cash -= fee
                         self.money_out += fee
                         self._flow(seller.cid, "spend_tools", -fee)
+        # B4a: o resto do planeta na paridade (só com country_v2)
+        imported = exported = 0.0
+        if self.country_v2:
+            unfilled_buyers = None
+            if received is not None:
+                unfilled_buyers = [
+                    (comp, want - received.get(comp.cid, 0.0))
+                    for comp, want in buys
+                    if want - received.get(comp.cid, 0.0) > 0.0001]
+            imported, exported = self._external_trade(
+                commodity, offers, offered_left, unfilled_buyers, price,
+                city_q - city_sold)
         # demanda realizada -> EMA pública (a régua da cobertura)
         demand_total = internal_demand + city_q
         alpha = self._mkt["model"].get("ema_alpha", 0.1)
         ema = self._demand_ema[commodity]
         self._demand_ema[commodity] = ema + alpha * (demand_total - ema)
-        # 3) preço: desequilíbrio + perseguição do justo; banda da âncora
-        ratio = (demand_total - total_supply) \
-            / max(demand_total, total_supply, 1.0)
+        # 3) preço: desequilíbrio (com o fluxo externo, quando há) +
+        # perseguição do justo; banda da âncora
+        ratio_demand = demand_total + exported
+        ratio_supply = total_supply + imported
+        ratio = (ratio_demand - ratio_supply) \
+            / max(ratio_demand, ratio_supply, 1.0)
         factor = min(1.6, max(0.6, 1.0 + 0.10 * ratio))
         new_price = price * factor
         new_price += p["kappa"] * (fair - new_price)
@@ -954,6 +1031,358 @@ class Engine:
         elif st["dir"] == "low":
             st["extreme"] = min(st["extreme"], new_price)
 
+    # -- país e política (B3) + comércio externo (B4a) ---------------------
+    def _init_countries(self, params_override: dict | None) -> None:
+        self._ctry = countrydata.resolve_country_params(params_override)
+        params = self._ctry["countries"]
+        names = set()
+        for d in self.deposits:
+            names.add(self.deposit_country(d))
+        for c in self.cities:
+            names.add(self.city_country(c.name))
+        for name in sorted(names):
+            p = params[name]
+            self._countries[name] = {
+                "S": float(p["stability_mean"]),
+                "S_mean": float(p["stability_mean"]),
+                "fx": 1.0, "tau": float(p["royalty"]),
+                "halt_until": -1, "restrictions": {},
+            }
+        self._force_events = list(self._ctry.get("force_events") or [])
+        self._rebuild_election_offsets()
+
+    def _rebuild_election_offsets(self) -> None:
+        stagger = int(self._ctry["model"]["election_stagger"]) \
+            if self._ctry else 6
+        self._election_offset = {name: i * stagger for i, name
+                                 in enumerate(sorted(self._countries))}
+
+    def deposit_country(self, dep: Deposit) -> str:
+        """País do depósito (mapa por nome; descoberta de Deus resolve
+        pelo vizinho conhecido — função pura das tabelas estáticas,
+        idêntica antes e depois de um restore)."""
+        got = self._deposit_country_cache.get(dep.name)
+        if got is None:
+            got = countrydata.country_of_deposit(dep)
+            self._deposit_country_cache[dep.name] = got
+        return got
+
+    def city_country(self, city_name: str) -> str:
+        if city_name in countrydata.CITY_COUNTRIES:
+            return countrydata.CITY_COUNTRIES[city_name]
+        city = self._city_by_name.get(city_name)
+        return countrydata.country_of_city(city) if city else "Brasil"
+
+    def capex_mult(self, country: str) -> float:
+        """Prêmio de risco-país sobre o capex: ×(1 + 0,25·(1−S)).
+        Desligado (ou país fora do mundo), é exatamente 1,0 — as
+        políticas multiplicam por ele sem mudar um bit do clássico."""
+        if not self.country_v2:
+            return 1.0
+        st = self._countries.get(country)
+        if st is None:
+            return 1.0
+        key = (country, st["S"])
+        got = self._capex_memo.get(key)
+        if got is None:
+            got = 1.0 + self._ctry["model"]["capex_premium"] \
+                * (1.0 - st["S"])
+            self._capex_memo[key] = got
+        return got
+
+    def country_state(self, name: str) -> dict:
+        """Os índices PÚBLICOS de um país: estabilidade, câmbio e
+        royalties são publicados na vida real — qualquer empresa os lê.
+        As probabilidades dos eventos políticos, nunca."""
+        st = self._countries[name]
+        return {"S": st["S"], "fx": st["fx"], "tau": st["tau"]}
+
+    def _is_halted(self, country: str) -> bool:
+        st = self._countries.get(country)
+        return st is not None and self.tick <= st["halt_until"]
+
+    def _ops_spend(self, comp: Company, country: str, amount: float) -> None:
+        """Opex de uma instalação, com B3 ligado: a fração local
+        (λ≈0,45) é precificada em moeda local (o câmbio e barateia ou
+        encarece o custo em US$) e os royalties τ do país incidem sobre
+        o opex como sink nomeado no ledger — acumulados por empresa e
+        lançados uma vez por tick de produção (a soma, na mesma ordem
+        das instalações, é a mesma; o que some é a chamada por
+        instalação). Desligado, é o _spend de sempre — bit-idêntico."""
+        if not self.country_v2:
+            self._spend(comp, amount, reason="ops")
+            return
+        st = self._countries[country]
+        lam = self._ctry["model"]["local_opex_frac"]
+        eff = amount * ((1.0 - lam) + lam / st["fx"])
+        self._spend(comp, eff, reason="ops")
+        royalty = eff * st["tau"]
+        if royalty > 0.0:
+            self._royalty_due[comp.cid] = \
+                self._royalty_due.get(comp.cid, 0.0) + royalty
+
+    def _country_resources(self, country: str) -> list[str]:
+        """Recursos minerais do país — cache preguiçoso sobre os
+        depósitos (descoberta de Deus invalida; restore reconstrói da
+        lista restaurada, deterministicamente)."""
+        cache = self._resources_by_country
+        if cache is None:
+            by_country: dict[str, set] = {}
+            for d in self.deposits:
+                by_country.setdefault(self.deposit_country(d),
+                                      set()).add(d.resource)
+            cache = self._resources_by_country = \
+                {k: sorted(v) for k, v in by_country.items()}
+        return cache.get(country, [])
+
+    def _hottest_resource(self, country: str) -> str | None:
+        res = self._country_resources(country)
+        if not res:
+            return None
+        return max(res, key=lambda r: (
+            self.prices[r] / self.anchors[r] if self.anchors[r] else 0.0, r))
+
+    def _reform_hot(self, country: str) -> bool:
+        """O acoplamento B1->B3: commodity do país acima de 1,5× a
+        âncora (a âncora pública do B1; sem B1, o preço-base) DOBRA a
+        probabilidade de reforma de royalties — governo intervém
+        quando a commodity está cara, não quando está barata."""
+        ratio = self._ctry["model"]["reform_hot_ratio"]
+        return any(self.prices[r] > ratio * self.anchors[r]
+                   for r in self._country_resources(country))
+
+    def _apply_political_event(self, country: str, event: str,
+                               resource: str | None = None) -> None:
+        st = self._countries.get(country)
+        if st is None:
+            raise ValueError(f"evento político fora do mundo: {country!r}")
+        m = self._ctry["model"]
+        res_text = None
+        if event == "royalty_reform":
+            st["tau"] = min(m["tau_max"], st["tau"] + m["reform_tau_step"])
+            res_text = resource or self._hottest_resource(country)
+            alvo = f" com {res_text} em alta" if res_text else ""
+            text = (f"REFORMA DE ROYALTIES: {country} eleva os royalties "
+                    f"da mineração{alvo} — a alíquota sobre o opex sobe "
+                    f"para {st['tau']:.1%} e operar no país fica mais caro.")
+        elif event == "export_restriction":
+            res = resource or \
+                self.rng.choice(self._country_resources(country))
+            months = int(m["restriction_months"])
+            st["restrictions"][res] = self.tick + months - 1
+            res_text = res
+            text = (f"RESTRIÇÃO DE EXPORTAÇÃO: {country} restringe as "
+                    f"exportações de {res} por {months} meses — a "
+                    f"paridade mundial de {res} e de "
+                    f"{chain.RAW_TO_REFINED[res]} dispara e importar "
+                    f"fica mais caro em todo o mapa.")
+        elif event == "state_jv":
+            st["S_mean"] = max(m["smean_min"],
+                               st["S_mean"] - m["jv_smean_drop"])
+            st["tau"] = min(m["tau_max"], st["tau"] + m["jv_tau_step"])
+            res_text = resource or \
+                (self._country_resources(country) or [None])[0]
+            alvo = f" de {res_text}" if res_text else ""
+            text = (f"PARTICIPAÇÃO ESTATAL: {country} impõe joint "
+                    f"venture com estatal majoritária nos projetos"
+                    f"{alvo} — a confiança do investidor cai "
+                    f"(estabilidade média em {st['S_mean']:.2f}) e os "
+                    f"royalties sobem para {st['tau']:.1%}.")
+        elif event == "judicial_halt":
+            months = int(m["halt_months_judicial"])
+            st["halt_until"] = max(st["halt_until"],
+                                   self.tick + months - 1)
+            text = (f"PARALISAÇÃO JUDICIAL: a Justiça de {country} "
+                    f"suspende as minas do país por {months} meses — "
+                    f"produção zerada enquanto durar a liminar (o "
+                    f"fantasma de Cobre Panamá).")
+        elif event == "subsidy":
+            st["tau"] = max(m["tau_min"],
+                            st["tau"] + m["subsidy_tau_step"])
+            st["S_mean"] = min(m["smean_max"],
+                               st["S_mean"] + m["subsidy_smean_gain"])
+            text = (f"SUBSÍDIO: {country} lança um pacote de incentivo "
+                    f"à mineração e à indústria — royalties caem para "
+                    f"{st['tau']:.1%} do opex e a estabilidade média "
+                    f"sobe para {st['S_mean']:.2f}.")
+        elif event == "disaster":
+            months = int(m["halt_months_disaster"])
+            st["halt_until"] = max(st["halt_until"],
+                                   self.tick + months - 1)
+            st["S"] = max(m["s_min"], st["S"] - m["disaster_s_shock"])
+            text = (f"DESASTRE NATURAL: um evento extremo atinge "
+                    f"{country} — minas paradas por {months} meses e a "
+                    f"estabilidade do país desaba para {st['S']:.2f}.")
+        elif event == "election":
+            shift = self.rng.uniform(-m["election_smean_shift"],
+                                     m["election_smean_shift"])
+            st["S_mean"] = min(m["smean_max"],
+                               max(m["smean_min"], st["S_mean"] + shift))
+            step = self.rng.choice(list(m["election_tau_steps"]))
+            st["tau"] = min(m["tau_max"],
+                            max(m["tau_min"], st["tau"] + step))
+            text = (f"ELEIÇÃO em {country}: o novo governo reposiciona "
+                    f"o país — estabilidade média em {st['S_mean']:.2f} "
+                    f"e royalties em {st['tau']:.1%} do opex.")
+        else:
+            raise ValueError(f"evento político desconhecido: {event!r}")
+        self.chronicle.add(self.tick, "politics", text, None,
+                           event=event, country=country,
+                           commodity=res_text, tau=st["tau"], S=st["S"],
+                           S_mean=st["S_mean"])
+
+    def _advance_politics(self) -> None:
+        """Um mês de política por país: S com reversão à média, câmbio
+        perseguindo a estabilidade, eleições no calendário e o motor
+        de eventos endógeno com as frequências ancoradas (por ano ->
+        por mês). Consome RNG sempre na mesma ordem (países ordenados,
+        eventos em ordem fixa); desligado, não consome nada. Os
+        eventos FORÇADOS (force_events dos parâmetros — gancho de
+        teste e de Deus) não consomem RNG."""
+        m = self._ctry["model"]
+        yearly = self._ctry["events_yearly"]
+        rnd, gauss = self.rng.random, self.rng.gauss
+        mp = countrydata.monthly_prob
+        self._capex_memo.clear()   # S anda neste avanço: memo do tick novo
+        for fe in self._force_events:
+            if fe["tick"] == self.tick:
+                self._apply_political_event(
+                    countrydata.normalize_country(fe["country"]),
+                    fe["event"], fe.get("resource"))
+        period = int(m["election_period"])
+        for name in sorted(self._countries):
+            st = self._countries[name]
+            st["S"] = min(m["s_max"], max(m["s_min"],
+                          st["S"] + m["s_reversion"]
+                          * (st["S_mean"] - st["S"])
+                          + gauss(0.0, m["s_sigma"])))
+            target = 1.0 + m["fx_beta"] * (st["S_mean"] - st["S"])
+            st["fx"] = min(m["fx_max"], max(m["fx_min"],
+                           st["fx"] + m["fx_reversion"]
+                           * (target - st["fx"])
+                           + gauss(0.0, m["fx_sigma"])))
+            if self.tick > 0 \
+                    and (self.tick - self._election_offset[name]) % period == 0:
+                self._apply_political_event(name, "election")
+            p_reform = mp(yearly["royalty_reform"])
+            if self._reform_hot(name):
+                p_reform = min(1.0, 2.0 * p_reform)
+            if rnd() < p_reform:
+                self._apply_political_event(name, "royalty_reform")
+            if self._country_resources(name):
+                if rnd() < mp(yearly["export_restriction"]):
+                    self._apply_political_event(name, "export_restriction")
+                if rnd() < mp(yearly["state_jv"]):
+                    self._apply_political_event(name, "state_jv")
+                if rnd() < mp(yearly["judicial_halt"]):
+                    self._apply_political_event(name, "judicial_halt")
+            if rnd() < mp(yearly["subsidy"]):
+                self._apply_political_event(name, "subsidy")
+            if rnd() < mp(yearly["disaster"]):
+                self._apply_political_event(name, "disaster")
+        # B4a: restrição ativa encarece a paridade da commodity (e do
+        # seu refinado) — é por aqui que a política morde o mercado.
+        self._parity_surcharge = {}
+        mult = 1.0 + m["restriction_parity_surcharge"]
+        for st in self._countries.values():
+            for res, until in st["restrictions"].items():
+                if self.tick <= until:
+                    for c in (res, chain.RAW_TO_REFINED.get(res)):
+                        if c:
+                            self._parity_surcharge[c] = max(
+                                self._parity_surcharge.get(c, 1.0), mult)
+
+    # -- comércio externo (B4a) ----------------------------------------------
+    def _parity(self, commodity: str) -> tuple[float, float]:
+        """(paridade de importação, paridade de exportação) da
+        commodity: âncora × (1 + tarifa + frete) / âncora × (1 − frete),
+        com o multiplicador das restrições de exportação ativas."""
+        trade = self._ctry["trade"]
+        anchor = self.anchors[commodity]
+        mult = self._parity_surcharge.get(commodity, 1.0)
+        return (anchor * (1.0 + trade["tariff"] + trade["freight"]) * mult,
+                anchor * (1.0 - trade["freight"]) * mult)
+
+    def parity_prices(self, commodity: str) -> tuple[float, float] | None:
+        """Paridades PÚBLICAS do comércio externo (B4a ligado)."""
+        if not self.country_v2:
+            return None
+        return self._parity(commodity)
+
+    def _external_capacity(self, commodity: str) -> float:
+        """Escala mensal do participante externo na commodity: fator
+        sobre a demanda das cidades (ou a escala de minério, para os
+        brutos, que não têm demanda urbana)."""
+        trade = self._ctry["trade"]
+        scale = max(chain.CITY_DEMAND.get(commodity, 0.0),
+                    trade["ore_scale"])
+        return scale * trade["capacity_factor"]
+
+    def _external_trade(self, commodity: str, offers: list,
+                        offered_left: dict,
+                        unfilled_buyers: list | None,
+                        price: float, city_unfilled: float
+                        ) -> tuple[float, float]:
+        """B4a — o resto do planeta como participante elástico.
+
+        Preço acima da paridade de importação: o exterior VENDE ao
+        mercado interno — primeiro às compras das empresas que o
+        mercado interno não atendeu (a massa entra como `imported` no
+        ledger e o dinheiro sai das empresas para a conta externo),
+        depois à demanda das cidades não atendida (a massa atravessa:
+        `imported` e `sold_external` se cancelam no estoque). Preço
+        abaixo da paridade de exportação: o exterior COMPRA o
+        excedente ofertado (massa sai como `sold_external`, dinheiro
+        entra da conta externo). Retorna (importado, exportado) para a
+        formação de preço enxergar a oferta/demanda efetiva — é assim
+        que a paridade tampa explosões e amortece colapsos."""
+        ci = chain.COMMODITY_INDEX[commodity]
+        trade = self._ctry["trade"]
+        p_imp, p_exp = self._parity(commodity)
+        cap = self._external_capacity(commodity)
+        cap_max = cap * trade["max_spread_mult"]
+        imported = exported = 0.0
+        if price > p_imp and (unfilled_buyers or city_unfilled > 0.0001):
+            budget = min(cap * (price / p_imp - 1.0), cap_max)
+            for comp, unfilled in (unfilled_buyers or []):
+                if budget <= 0:
+                    break
+                qty = min(unfilled, budget,
+                          comp.cash / price if price > 0 else 0.0)
+                if qty <= 0.0001:
+                    continue
+                comp.stocks.add(ci, qty)
+                comp.cash -= qty * price
+                self._flow(comp.cid, "import_buy", -qty * price)
+                self.money_to_external += qty * price
+                self.ledger_mass[commodity]["imported"] += qty
+                imported += qty
+                budget -= qty
+            if budget > 0 and city_unfilled > 0.0001:
+                qty = min(city_unfilled, budget)
+                self.ledger_mass[commodity]["imported"] += qty
+                self.ledger_mass[commodity]["sold_external"] += qty
+                imported += qty
+                budget -= qty
+        if price < p_exp and offers:
+            budget = min(cap * (1.0 - price / p_exp), cap_max)
+            for seller, _q in offers:
+                if budget <= 0:
+                    break
+                left = offered_left.get(seller.cid, 0.0)
+                if left <= 0.0001:
+                    continue
+                qty = min(left, budget)
+                seller.stocks.add(ci, -qty)
+                seller.cash += qty * price
+                self._flow(seller.cid, "export_sale", qty * price)
+                self.money_from_external += qty * price
+                self.ledger_mass[commodity]["sold_external"] += qty
+                offered_left[seller.cid] -= qty
+                exported += qty
+                budget -= qty
+        return imported, exported
+
     # -- mercado --------------------------------------------------------------
     def _market(self) -> None:
         if self.market_v2:
@@ -983,12 +1412,16 @@ class Engine:
                     offers.append((c, q))
                 buys.append((c, c._buys.get(commodity, 0.0)))
             total_supply = sum(q for _, q in offers)
-            if total_supply <= 0:
-                continue
+            if total_supply <= 0 and not self.country_v2:
+                continue    # sem oferta interna E sem B4a, nada acontece;
+                            # com B4a, importações ainda atendem compras
             # 1) comércio entre empresas (dinheiro interno: soma zero)
             internal_demand = sum(q for _, q in buys)
             sold_internal = 0.0
             offered_left = {c.cid: q for c, q in offers}
+            city_sold = 0.0
+            received = {} if self.country_v2 \
+                and price > self._parity(commodity)[0] else None
             for buyer, want in sorted(buys, key=lambda x: x[0].cid):
                 if want <= 0:
                     continue
@@ -1012,6 +1445,9 @@ class Engine:
                     self._flow(buyer.cid, "trade_out", -share * price)
                     offered_left[seller.cid] -= share
                     sold_internal += share
+                    if received is not None:
+                        received[buyer.cid] = \
+                            received.get(buyer.cid, 0.0) + share
             # 2) demanda das cidades sobre o que restou
             city_q = chain.CITY_DEMAND.get(commodity, 0.0) \
                 * self._demand_factor(commodity)
@@ -1046,6 +1482,7 @@ class Engine:
                     self.money_in += qty * price
                     self.ledger_mass[commodity]["sold_external"] += qty
                     offered_left[seller.cid] -= qty
+                    city_sold += qty
                     # LojaSim: a venda passou pela prateleira do marketplace
                     # — a comissão é sink (vai ao "mundo"), via ledger/flows.
                     if commodity == "device" \
@@ -1054,8 +1491,25 @@ class Engine:
                         seller.cash -= fee
                         self.money_out += fee
                         self._flow(seller.cid, "spend_tools", -fee)
+            # B4a: o resto do planeta na paridade (só com country_v2) —
+            # importações viram oferta efetiva e exportações, demanda
+            # efetiva, na formação de preço abaixo
+            if self.country_v2:
+                unfilled_buyers = None
+                if received is not None:
+                    unfilled_buyers = [
+                        (comp, want - received.get(comp.cid, 0.0))
+                        for comp, want in buys
+                        if want - received.get(comp.cid, 0.0) > 0.0001]
+                imported, exported = self._external_trade(
+                    commodity, offers, offered_left, unfilled_buyers,
+                    price, city_q - city_sold)
+                demand_extra, supply_extra = exported, imported
+            else:
+                demand_extra = supply_extra = 0.0
             # 3) ajuste de preço por desequilíbrio
-            demand = internal_demand + city_q
+            demand = internal_demand + city_q + demand_extra
+            total_supply += supply_extra
             ratio = (demand - total_supply) / max(demand, total_supply, 1.0)
             factor = min(1.35, max(0.72, 1.0 + 0.10 * ratio))
             base = chain.BASE_PRICES[commodity]
@@ -1155,6 +1609,17 @@ class Engine:
                     "regime": self._regime[c],
                     "cover": round(self._cover[c], 3)}
                 for c in chain.COMMODITIES}
+        if self.country_v2:
+            # índices PÚBLICOS por país (S/e/τ são publicados) e as
+            # paridades do comércio externo — nada privado nestes blocos
+            frame["politics"] = {
+                name: {"S": round(st["S"], 3), "fx": round(st["fx"], 3),
+                       "tau": round(st["tau"], 4)}
+                for name, st in sorted(self._countries.items())}
+            frame["trade"] = {
+                c: {"parity_import": round(self._parity(c)[0], 2),
+                    "parity_export": round(self._parity(c)[1], 2)}
+                for c in chain.COMMODITIES}
         self.frames.append(frame)
 
     # -- loop principal ------------------------------------------------------------
@@ -1165,6 +1630,8 @@ class Engine:
         cash_start = {c.cid: c.cash for c in self.companies}
         self._flows = {}
         self._apply_god_events()
+        if self.country_v2:
+            self._advance_politics()
         if self.market_v2:
             self._advance_market()
         for comp in self.companies:
@@ -1251,6 +1718,20 @@ class Engine:
                 "cover": dict(self._cover),
                 "regimes": dict(self._regime),
             }
+        if self.country_v2:
+            # índices públicos por país + a conta "externo" do B4a
+            res["politics"] = {name: self.country_state(name)
+                               for name in sorted(self._countries)}
+            res["trade"] = {
+                "money_to_external": self.money_to_external,
+                "money_from_external": self.money_from_external,
+                "imported": {c: self.ledger_mass[c].get("imported", 0.0)
+                             for c in chain.COMMODITIES},
+                "parity_import": {c: self._parity(c)[0]
+                                  for c in chain.COMMODITIES},
+                "parity_export": {c: self._parity(c)[1]
+                                  for c in chain.COMMODITIES},
+            }
         return res
 
     # -- snapshot / restore -------------------------------------------------
@@ -1309,6 +1790,16 @@ class Engine:
                 "price_ring": {c: list(r)
                                for c, r in self._price_ring.items()},
                 "record_state": copy.deepcopy(self._record_state),
+            }
+        if self.country_v2:
+            # bloco presente SÓ com B3/B4a ligados: desligado, o
+            # state_dict é byte-idêntico ao clássico (goldens da Fase 1)
+            state["country_v2"] = {
+                "params": copy.deepcopy(self._ctry),
+                "countries": copy.deepcopy(self._countries),
+                "money_to_external": self.money_to_external,
+                "money_from_external": self.money_from_external,
+                "parity_surcharge": dict(self._parity_surcharge),
             }
         return state
 
@@ -1384,6 +1875,28 @@ class Engine:
             for c in chain.COMMODITIES:
                 eng._record_state.setdefault(
                     c, {"dir": None, "extreme": 0.0})
+        # país/política: states clássicos não têm o bloco -> desligado
+        ct = state.get("country_v2")
+        eng.country_v2 = bool(ct)
+        eng._ctry = None
+        eng._countries = {}
+        eng._resources_by_country = None
+        eng._deposit_country_cache = {}
+        eng._election_offset = {}
+        eng._force_events = []
+        eng._parity_surcharge = {}
+        eng._capex_memo = {}
+        eng._royalty_due = {}
+        eng.money_to_external = 0.0
+        eng.money_from_external = 0.0
+        if ct:
+            eng._ctry = countrydata._validate(copy.deepcopy(ct["params"]))
+            eng._countries = copy.deepcopy(ct["countries"])
+            eng.money_to_external = ct["money_to_external"]
+            eng.money_from_external = ct["money_from_external"]
+            eng._parity_surcharge = dict(ct.get("parity_surcharge", {}))
+            eng._force_events = list(eng._ctry.get("force_events") or [])
+            eng._rebuild_election_offsets()
         eng._tick_stock_totals = None
         eng._tick_seasonal = None
         return eng

@@ -30,6 +30,8 @@ class EpisodeSpec:
     world_data: bool = True
     market_v2: bool = False             # B1 mercado vivo (Fase 2)
     market_params: dict | None = None   # override de parâmetros do B1
+    country_v2: bool = False            # B3 país/política + B4a (Fase 3)
+    country_params: dict | None = None  # override de parâmetros do B3/B4a
     god_events: tuple | None = None     # tupla de dicts (congelada)
     keep_frames: bool = False           # frames pesam; treino não precisa
     policy_specs: tuple | None = None   # PolicySpec por cid (torneios);
@@ -46,7 +48,9 @@ def run_episode(spec: EpisodeSpec) -> dict:
                  god_events=list(spec.god_events) if spec.god_events else None,
                  policy=policy,
                  world_data=spec.world_data, market_v2=spec.market_v2,
-                 market_params=spec.market_params)
+                 market_params=spec.market_params,
+                 country_v2=spec.country_v2,
+                 country_params=spec.country_params)
     res = eng.run(spec.ticks)
     out = {
         "seed": spec.seed,
@@ -57,6 +61,9 @@ def run_episode(spec: EpisodeSpec) -> dict:
         "initial_cash": eng.initial_cash,
         "money_in": eng.money_in,
         "money_out": eng.money_out,
+        # conta "externo" do B4a (0,0 com country_v2 desligado)
+        "money_to_external": eng.money_to_external,
+        "money_from_external": eng.money_from_external,
         # insumos da fitness de torneio: supercomputadores POR empresa
         # e o mapa cid -> (nome, arquétipo) na ordem do motor
         "super_by_cid": {int(k): float(v)

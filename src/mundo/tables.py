@@ -41,3 +41,16 @@ def anchors_table(engine) -> np.ndarray:
     anchors = getattr(engine, "anchors", None) or chain.BASE_PRICES
     return np.array([anchors[c] for c in chain.COMMODITIES],
                     dtype=np.float64)
+
+
+def countries_table(engine) -> tuple[list[str], np.ndarray]:
+    """Índices públicos por país (B3): (nomes ordenados, matriz (P, 3)).
+
+    Colunas: estabilidade S, câmbio-índice e, royalties τ — a linha
+    ``stab/fx/royalty (P,)`` do design §3.1, em três vetores fatiáveis.
+    Sem country_v2, devolve ([], matriz vazia)."""
+    countries = getattr(engine, "_countries", None) or {}
+    names = sorted(countries)
+    rows = [[countries[n]["S"], countries[n]["fx"], countries[n]["tau"]]
+            for n in names]
+    return names, np.array(rows, dtype=np.float64).reshape(len(names), 3)
