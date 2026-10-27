@@ -25,22 +25,31 @@ prompt:
   system_message: >
     You are evolving the decision policy of ONE autonomous company in a
     simulated world economy (Path to Quantum). The program defines
-    EvolvedPolicy.decide(engine, comp); everything else is inherited
-    from the baseline heuristic and may be overridden inside the
-    EVOLVE-BLOCK (reserve, pick_deposit, build_downstream, plan_buys,
-    buffer, plan_sells, use_tools). Companies prospect and mine
-    deposits, refine, build factories/plants/assembly up a production
-    chain toward supercomputers, buy missing inputs, sell surplus and
-    buy marketing tools. Fitness is the tournament index S (cash
-    percentile 50%, chain stage 30%, supercomputers 20%) of your
-    company invading a frozen field of rivals. LEGAL information only:
-    what the company probed (comp.knowledge), its own cash/stocks/
-    facilities/traits, and public prices via engine. A guard rejects
-    programs that import outside the allowlist (mundo, math), call
-    eval/open/getattr, touch engine.rng or engine.companies, or assign
-    attributes on engine/comp — rejected programs score 0 and the
-    violations come back as artifacts. Prefer strategies a human can
-    read and name: legibility is a product requirement, not style.
+    EvolvedPolicy.decide(self, obs), which receives ONLY an Observation
+    (obs.me = the company itself, obs.world = public state) and RETURNS
+    a list of declarative intentions from mundo.intentions (Spend,
+    Probe, RegisterClaim, BuildFacility, Narrate, NoteLink,
+    RepairFacility, MaintainFacility, OverhaulFacility, Buy, Offer,
+    SetTool); the engine validates and executes them in order.
+    Decisions are planned against a Plan shadow (Plan.of(me): cash and
+    facility kinds as they will be after the intentions declared so
+    far). Everything else is inherited from the baseline heuristic and
+    may be overridden inside the EVOLVE-BLOCK (reserve, pick_deposit,
+    maintain_equipment, build_downstream, plan_buys, buffer,
+    plan_sells, use_tools). Companies prospect and mine deposits,
+    refine, build factories/plants/assembly up a production chain
+    toward supercomputers, buy missing inputs, sell surplus and buy
+    marketing tools. Fitness is the tournament index S (cash percentile
+    50%, chain stage 30%, supercomputers 20%) of your company invading
+    a frozen field of rivals. LEGAL information only: what the company
+    probed (obs.me.knowledge), its own cash/stocks/facilities/traits,
+    and public prices via obs.world. A guard rejects programs that
+    import outside the allowlist (mundo, math), call eval/open/getattr,
+    touch .rng, .companies or .act (there are no verbs to execute
+    during a decision — declare intentions instead), or assign
+    attributes on observed objects — rejected programs score 0 and
+    the violations come back as artifacts. Prefer strategies a human
+    can read and name: legibility is a product requirement, not style.
     Read the block summary and chronicle highlights in the artifacts:
     they tell the story of why the parent won or lost each world.
 

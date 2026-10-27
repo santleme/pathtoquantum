@@ -27,7 +27,16 @@ módulo é a fronteira segura entre esse código e o motor:
   futuros na superfície, e os internos das views vivem sob nomes
   *name-mangled* que a regra nova desta guarda rejeita no fonte
   (atributo com ``__``). O loader ainda exige a assinatura do
-  contrato novo, ``decide(self, obs)``.
+  contrato, ``decide(self, obs)``.
+
+  Fatia 3 (contrato declarativo): o ``decide`` do programa devolve
+  a lista de intenções (``mundo.intentions``, na allowlist) que o
+  motor valida e executa — executar verbo durante a decisão acabou:
+  esta guarda soma ``act`` aos atributos banidos no fonte (o
+  ``obs.act`` da observação de decisão é um selo que levanta erro,
+  e programa que o toca nem carrega), e um programa legado que
+  devolva ``None`` é rejeitado pelo motor com ``IntentionError``
+  explicando o contrato.
 
 - ``load_program_policy``: valida, carrega o módulo de um arquivo e
   devolve a instância, com ``program_hash``/``pid`` para a Crônica
@@ -48,9 +57,10 @@ from .engine import HeuristicPolicy, Policy
 # interface pública do mundo — nunca o torneio, o driver ou este
 # próprio carregador (superfície de episódios aninhados/recursão).
 ALLOWED_IMPORT_MODULES = {"mundo", "mundo.chain", "mundo.engine",
-                          "mundo.companies", "math"}
+                          "mundo.companies", "mundo.intentions",
+                          "math"}
 # Para ``from mundo import X``: só os submódulos públicos acima.
-MUNDO_PACKAGE_NAMES = {"chain", "engine", "companies"}
+MUNDO_PACKAGE_NAMES = {"chain", "engine", "companies", "intentions"}
 
 # Donos legais de escrita por subscrito, como (origem, primeiro
 # atributo): as intenções da empresa, o conhecimento dela e o
@@ -68,8 +78,11 @@ BANNED_CALLS = {
 # Atributos que o código candidato nunca toca diretamente:
 # - ``rng``: o fluxo de aleatoriedade é do motor (os métodos herdados
 #   sorteiam; a política, não);
-# - ``companies``: o estado das rivais não é leitura legal da focal.
-BANNED_ATTRS = {"rng", "companies"}
+# - ``companies``: o estado das rivais não é leitura legal da focal;
+# - ``act``: desde a fatia 3 a decisão é declarativa — o programa
+#   devolve intenções (mundo.intentions); verbo nenhum executa
+#   durante o decide, e o ``obs.act`` da decisão é um selo.
+BANNED_ATTRS = {"rng", "companies", "act"}
 
 _load_counter = itertools.count()
 _class_cache: dict[str, type] = {}
@@ -288,8 +301,11 @@ def load_program_policy(path) -> Policy:
             raise ValueError(
                 f"{path}: o programa precisa definir "
                 "EvolvedPolicy(HeuristicPolicy)")
-        # Guarda v2: o contrato é decide(self, obs) — a política
-        # recebe SÓ a Observation, nunca (engine, comp).
+        # Guarda v2/fatia 3: o contrato é decide(self, obs) -> list
+        # de intenções — a política recebe SÓ a Observation, nunca
+        # (engine, comp), e devolve as intenções declaradas (o
+        # motor rejeita retorno que não seja a lista, com
+        # IntentionError explicando o contrato).
         try:
             inspect.signature(cls.decide).bind(None, None)
         except (TypeError, ValueError) as exc:
