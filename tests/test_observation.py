@@ -8,6 +8,7 @@ inalcançáveis a partir da única coisa que a política recebe.
 """
 from __future__ import annotations
 
+import json
 import random
 from pathlib import Path
 
@@ -256,3 +257,236 @@ def test_full_living_world_runs_on_observation():
     res = eng.run(24)
     assert len(res["scoreboard"]) == 8
     assert eng.tick == 24
+
+
+# --------------------------------------------------------------------- #
+# Fatia 2 — snapshot serializável (SPEC §4)
+# --------------------------------------------------------------------- #
+def _walk(node):
+    """(tipo, item) de cada chave e cada folha do snapshot."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield ("key", k)
+            yield from _walk(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _walk(v)
+    else:
+        yield ("value", node)
+
+
+def test_snapshot_is_json_pure_and_detached():
+    eng = Engine(seed=42, n_companies=8, world_data=False)
+    eng.run(15)
+    obs = _obs(eng)
+    snap = obs.to_snapshot()
+    # só os dois lados da observação: act/rng são capacidades, não
+    # dados — ficam fora por desenho
+    assert set(snap) == {"me", "world"}
+    # JSON puro: round-trip idêntico e nenhuma folha exótica
+    assert json.loads(json.dumps(snap)) == snap
+    for kind, item in _walk(snap):
+        if kind == "key":
+            assert isinstance(item, str)
+        else:
+            assert item is None or isinstance(
+                item, (bool, int, float, str))
+    # destacado: escrever no snapshot não toca a view nem o motor, e
+    # o mundo andar não muda a fotografia já tirada
+    cash = obs.me.cash
+    snap["me"]["cash"] = -1.0
+    snap["world"]["prices"]["copper"] = -1.0
+    assert obs.me.cash == cash and eng.prices["copper"] > 0
+    tick = snap["world"]["tick"]
+    eng.run(3)
+    assert snap["world"]["tick"] == tick
+
+
+def test_snapshot_matches_live_view_field_by_field():
+    eng = Engine(seed=42, n_companies=8, world_data=False)
+    eng.run(15)
+    obs = _obs(eng)
+    # garante knowledge não vazio NA MESMA Observation (a view é viva)
+    obs.act.probe(eng.deposits[0].name)
+    snap = obs.to_snapshot()
+    me, w = snap["me"], snap["world"]
+    # -- a focal, campo a campo contra a view viva
+    assert me["cid"] == obs.me.cid and me["name"] == obs.me.name
+    assert me["cash"] == obs.me.cash
+    assert me["alive"] == obs.me.alive
+    assert me["traits"] == dict(obs.me.traits)
+    assert me["stocks"] == dict(obs.me.stocks.items())
+    assert me["knowledge"] == {n: list(p) for n, p
+                               in obs.me.knowledge.items()}
+    assert eng.deposits[0].name in me["knowledge"]
+    assert me["claimed"] == [list(c) for c in sorted(obs.me.claimed)]
+    assert me["chain_stage"] == obs.me.chain_stage()
+    t = obs.me.tools
+    assert me["tools"] == {"insta_until": t.insta_until,
+                           "insta_strength": t.insta_strength,
+                           "zap_until": t.zap_until,
+                           "vid_until": t.vid_until,
+                           "loja_until": t.loja_until}
+    hq = eng._city_by_name[obs.me.hq_city]
+    assert me["hq"] == {"name": hq.name, "lat": hq.lat, "lon": hq.lon,
+                        "cell": list(hq.cell),
+                        "country": eng.city_country(hq.name),
+                        "demand_weight": hq.demand_weight}
+    for sf, fv in zip(me["facilities"], obs.me.facilities):
+        assert sf["id"] == fv.id and sf["kind"] == fv.kind
+        assert sf["cell"] == list(fv.cell)
+        assert sf["deposit"] == fv.deposit
+        assert sf["equip"] is None          # sem B2, sem bloco equip
+    # -- o mundo público, campo a campo
+    assert w["tick"] == eng.tick == obs.world.tick
+    assert w["market_v2"] is False and w["country_v2"] is False
+    assert w["equip_v2"] is False
+    assert w["prices"] == dict(obs.world.prices) == eng.prices
+    assert w["countries"] == []
+    assert w["equip_policy"] is None and w["equip_model"] is None
+    for sd, dv in zip(w["deposits"], obs.world.deposits):
+        assert sd == {"name": dv.name, "resource": dv.resource,
+                      "lat": dv.lat, "lon": dv.lon,
+                      "cell": list(dv.cell), "country": dv.country,
+                      "claimed_by": dv.claimed_by}
+    for sc, cv in zip(w["cities"], obs.world.cities):
+        assert sc == {"name": cv.name, "lat": cv.lat, "lon": cv.lon,
+                      "cell": list(cv.cell), "country": cv.country,
+                      "demand_weight": cv.demand_weight}
+    assert set(w["capex"]) == {d["country"] for d in w["deposits"]} \
+        | {c["country"] for c in w["cities"]}
+    for name, mult in w["capex"].items():
+        assert mult == obs.world.capex_mult(name)
+
+
+def test_snapshot_living_world_countries_and_equip():
+    eng = Engine(seed=42, n_companies=8, world_data=False,
+                 market_v2=True, country_v2=True, equip_v2=True)
+    obs = _obs(eng)
+    fac = obs.act.build_facility("mine", (0, 0))
+    raw = eng.companies[0].facilities[fac.id]
+    assert "equip" not in raw
+    obs2 = _obs(eng)                     # a Observation que vê a mina
+    snap = obs2.to_snapshot()
+    # fotografar NÃO materializou o estado preguiçoso da instalação
+    assert "equip" not in raw
+    sf = next(f for f in snap["me"]["facilities"] if f["id"] == fac.id)
+    canonical = {"age": 0, "cond": 1.0, "broken": False,
+                 "down_until": -1, "repair_cost": 0.0,
+                 "repair_ticks": 0}
+    assert sf["equip"] == canonical
+    # e bate com o que a view viva expõe quando lida de verdade
+    live = obs2.me.facilities[-1].equip
+    assert sf["equip"] == {"age": live.age, "cond": live.cond,
+                           "broken": live.broken,
+                           "down_until": live.down_until,
+                           "repair_cost": live.repair_cost,
+                           "repair_ticks": live.repair_ticks}
+    # países públicos e parâmetros do B2, serializáveis
+    w = snap["world"]
+    assert [c["name"] for c in w["countries"]] == \
+        sorted(eng._countries)
+    for sc in w["countries"]:
+        st = eng.country_state(sc["name"])
+        assert sc == {"name": sc["name"], "S": st["S"], "fx": st["fx"],
+                      "tau": st["tau"]}
+    assert w["equip_policy"] is not None and w["equip_model"] is not None
+    assert json.loads(json.dumps(snap)) == snap
+
+
+def test_snapshot_leaks_nothing_private():
+    # futuro agendado com sentinelas, nos dois canais (Deus e B3)
+    ev = [{"tick": 999, "type": "price_shock", "commodity": "lithium",
+           "factor": 7.777001, "duration": 3}]
+    eng = Engine(seed=42, n_companies=8, world_data=False,
+                 market_v2=True, country_v2=True, equip_v2=True,
+                 god_events=ev)
+    eng._force_events = [{"country": "Chile", "event": "reform",
+                          "tick": 987654}]
+    # verdade oculta de depósito NÃO sondado e caixa da rival
+    eng.deposits[3].grade = 0.4242424242
+    eng.companies[1].cash = 123_456_789.0
+    obs = _obs(eng, cid=0)
+    assert obs.me.knowledge.get(eng.deposits[3].name) is None
+    snap = obs.to_snapshot()
+    keys = {item for kind, item in _walk(snap) if kind == "key"}
+    values = {item for kind, item in _walk(snap) if kind == "value"}
+    forbidden = {"grade", "size_t", "god_events", "force_events",
+                 "_force_events", "regime", "regimes", "demand_ema",
+                 "cover", "fair_noise", "record_state", "remaining",
+                 "rng", "act", "engine", "companies", "state_dict",
+                 "super_by_cid", "spend_hist"}
+    assert not (keys & forbidden), keys & forbidden
+    # nenhuma sentinela em valor nenhum, em nível nenhum
+    assert 0.4242424242 not in values
+    assert 7.777001 not in values
+    assert 987654 not in values
+    assert 123_456_789.0 not in values
+    # a superfície viva também não ganhou os canais proibidos
+    assert not hasattr(obs.world, "regime")
+    assert not hasattr(obs.world, "scoreboard")
+    assert not hasattr(obs.world, "cover")
+
+
+class _SnapshotPolicy(HeuristicPolicy):
+    """A heurística fotografando TODA decisão antes de decidir — se
+    o snapshot tocasse o mundo (RNG, estado, ordem), o episódio
+    divergiria do episódio sem fotografia."""
+
+    def decide(self, obs):
+        json.dumps(obs.to_snapshot())
+        return super().decide(obs)
+
+
+def test_snapshot_replay_reproduces_episode():
+    # aceitação da SPEC §4 fatia 2: episódio com snapshot == episódio
+    # da view, bit a bit (state_dict completo), clássico e vivo
+    for kw in ({}, {"market_v2": True, "country_v2": True,
+                    "equip_v2": True}):
+        a = Engine(seed=42, n_companies=8, world_data=False,
+                   policy=_SnapshotPolicy(), **kw)
+        b = Engine(seed=42, n_companies=8, world_data=False, **kw)
+        a.run(36)
+        b.run(36)
+        assert a.state_dict() == b.state_dict()
+
+
+# --------------------------------------------------------------------- #
+# Fatia 2 — séries públicas do mercado vivo (SPEC §4)
+# --------------------------------------------------------------------- #
+def test_public_price_history_and_anchors():
+    eng = Engine(seed=42, n_companies=8, world_data=False,
+                 market_v2=True)
+    window = int(eng._mkt["model"].get("record_window_months", 24))
+    eng.run(3)
+    obs = _obs(eng)
+    # a janela É o anel público do motor, nem mais nem menos
+    for c in chain.COMMODITIES:
+        assert list(obs.world.price_history[c]) == eng._price_ring[c]
+        assert len(obs.world.price_history[c]) == 3
+    assert dict(obs.world.anchors) == eng.anchors
+    eng.run(30)
+    obs = _obs(eng)
+    snap = obs.to_snapshot()
+    for c in chain.COMMODITIES:
+        hist = obs.world.price_history[c]
+        assert list(hist) == eng._price_ring[c]
+        assert len(hist) == window          # o anel é limitado
+        assert snap["world"]["price_history"][c] == list(hist)
+        assert all(isinstance(v, float) for v in hist)
+    assert snap["world"]["anchors"] == dict(eng.anchors)
+    # a janela é cópia: o mundo andar não reescreve a view antiga
+    first = obs.world.price_history["copper"][0]
+    eng.run(2)
+    assert obs.world.price_history["copper"][0] == first
+
+
+def test_market_series_empty_without_market_v2():
+    eng = Engine(seed=42, n_companies=8, world_data=False)
+    eng.run(6)
+    obs = _obs(eng)
+    assert dict(obs.world.anchors) == {}
+    assert dict(obs.world.price_history) == {}
+    snap = obs.to_snapshot()
+    assert snap["world"]["anchors"] == {}
+    assert snap["world"]["price_history"] == {}

@@ -23,6 +23,12 @@ fachada de sorteio (``rng``). Fog-of-war vira tipo:
 - ``rng`` é fachada forward-only (``uniform``/``random``): o fluxo
   de aleatoriedade continua do motor; o objeto ``Random`` (com
   ``getstate``/``setstate``) nunca é entregue.
+- Fatia 2: ``Observation.to_snapshot()`` fotografa a decisão em
+  valores JSON puros (só ``me``/``world`` — ``act``/``rng`` são
+  capacidades, não dados), sem tocar o mundo; e ``world`` expõe as
+  séries públicas do mercado vivo (``anchors`` e ``price_history``,
+  o anel público de preços). O regime do B1 continua só de Deus —
+  decisão fundamentada na SPEC §4.
 
 Este módulo é código DE CONFIANÇA do motor (como o próprio motor):
 ele toca os objetos vivos para montar as views. Quem recebe as
@@ -30,6 +36,7 @@ views — a política — não toca em mais nada.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
 
 from . import chain
@@ -44,6 +51,24 @@ class _View:
     ``AttributeError``."""
 
     __slots__ = ()
+
+
+def _jsonify(value):
+    """Converte um valor da superfície em JSON puro — só ``dict``,
+    ``list``, ``str``, ``int``, ``float``, ``bool`` e ``None``,
+    recursivamente (tuplas viram listas, mappings viram dicts).
+    Qualquer outro tipo levanta ``TypeError``: o snapshot nunca
+    carrega referência viva nem tipo exótico por acidente."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _jsonify(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonify(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return [_jsonify(v) for v in sorted(value, key=repr)]
+    raise TypeError(
+        f"valor não serializável no snapshot: {type(value).__name__}")
 
 
 # --------------------------------------------------------------------- #
@@ -97,6 +122,12 @@ class DepositView(_View):
         """cid de quem reivindicou a célula (mapa público), ou None."""
         return self.__claimed_by
 
+    def to_snapshot(self) -> dict:
+        return {"name": self.__name, "resource": self.__resource,
+                "lat": self.__lat, "lon": self.__lon,
+                "cell": list(self.__cell), "country": self.__country,
+                "claimed_by": self.__claimed_by}
+
     def __repr__(self) -> str:
         return f"DepositView({self.__name!r})"
 
@@ -140,6 +171,12 @@ class CityView(_View):
     def demand_weight(self) -> float:
         return self.__demand_weight
 
+    def to_snapshot(self) -> dict:
+        return {"name": self.__name, "lat": self.__lat,
+                "lon": self.__lon, "cell": list(self.__cell),
+                "country": self.__country,
+                "demand_weight": self.__demand_weight}
+
     def __repr__(self) -> str:
         return f"CityView({self.__name!r})"
 
@@ -174,6 +211,10 @@ class CountryView(_View):
     def tau(self) -> float:
         return self.__tau
 
+    def to_snapshot(self) -> dict:
+        return {"name": self.__name, "S": self.__S, "fx": self.__fx,
+                "tau": self.__tau}
+
     def __repr__(self) -> str:
         return f"CountryView({self.__name!r})"
 
@@ -181,24 +222,38 @@ class CountryView(_View):
 class WorldView(_View):
     """O mundo público no instante da decisão: tempo, regras (flags),
     preços, depósitos anunciados, cidades, países e o prêmio de
-    capex por país (derivado público de ``S``, pré-computado)."""
+    capex por país (derivado público de ``S``, pré-computado).
+
+    Séries públicas do mercado vivo (fatia 2, SPEC §4): com
+    ``market_v2`` ligado, ``anchors`` (a âncora p* corrente por
+    commodity — série pública por desenho, é o que os frames e o
+    ``result()`` publicam) e ``price_history`` (o anel público de
+    preços: os últimos preços publicados de cada commodity, do mais
+    antigo ao mais novo — histórico de preço público é público).
+    O REGIME fica fora de propósito: é estado que só Deus vê (as
+    empresas o inferem do preço); ``cover``/EMA/ruído idem — são
+    internos do modelo, e ``cover`` é agregado de estoques privados.
+    Desligado o B1, as duas séries são mappings vazios."""
 
     __slots__ = ("_WorldView__tick", "_WorldView__market_v2",
                  "_WorldView__country_v2", "_WorldView__equip_v2",
-                 "_WorldView__prices", "_WorldView__deposits",
+                 "_WorldView__prices", "_WorldView__anchors",
+                 "_WorldView__price_history", "_WorldView__deposits",
                  "_WorldView__cities", "_WorldView__countries",
                  "_WorldView__capex", "_WorldView__equip_policy",
                  "_WorldView__equip_model")
 
     def __init__(self, *, tick: int, market_v2: bool, country_v2: bool,
-                 equip_v2: bool, prices, deposits: tuple,
-                 cities: tuple, countries: tuple, capex: dict,
-                 equip_policy, equip_model):
+                 equip_v2: bool, prices, anchors, price_history,
+                 deposits: tuple, cities: tuple, countries: tuple,
+                 capex: dict, equip_policy, equip_model):
         self.__tick = tick
         self.__market_v2 = market_v2
         self.__country_v2 = country_v2
         self.__equip_v2 = equip_v2
         self.__prices = prices
+        self.__anchors = anchors
+        self.__price_history = price_history
         self.__deposits = deposits
         self.__cities = cities
         self.__countries = countries
@@ -228,6 +283,23 @@ class WorldView(_View):
         return self.__prices
 
     @property
+    def anchors(self):
+        """Âncora p* corrente por commodity (mapping somente-leitura,
+        cópia do instante da decisão). Só com ``market_v2``; sem ele,
+        mapping vazio — a âncora como série só existe no mercado
+        vivo. A âncora é pública por desenho: é o preço de referência
+        que o mundo anuncia (frames e ``result()`` a publicam)."""
+        return self.__anchors
+
+    @property
+    def price_history(self):
+        """Janela pública de preços por commodity: tupla de preços já
+        publicados, do mais antigo ao mais novo (o anel público do
+        motor, copiado no instante da decisão). Só com
+        ``market_v2``; sem ele, mapping vazio."""
+        return self.__price_history
+
+    @property
     def deposits(self) -> tuple:
         return self.__deposits
 
@@ -254,6 +326,25 @@ class WorldView(_View):
         prêmio; idêntico ao ``Engine.capex_mult`` no instante da
         construção — S não muda durante as decisões de um tick)."""
         return self.__capex.get(country, 1.0)
+
+    def to_snapshot(self) -> dict:
+        return {
+            "tick": self.__tick,
+            "market_v2": self.__market_v2,
+            "country_v2": self.__country_v2,
+            "equip_v2": self.__equip_v2,
+            "prices": _jsonify(dict(self.__prices)),
+            "anchors": _jsonify(dict(self.__anchors)),
+            "price_history": _jsonify(dict(self.__price_history)),
+            "deposits": [d.to_snapshot() for d in self.__deposits],
+            "cities": [c.to_snapshot() for c in self.__cities],
+            "countries": [c.to_snapshot() for c in self.__countries],
+            "capex": _jsonify(dict(self.__capex)),
+            "equip_policy": _jsonify(self.__equip_policy)
+            if self.__equip_policy is not None else None,
+            "equip_model": _jsonify(self.__equip_model)
+            if self.__equip_model is not None else None,
+        }
 
 
 # --------------------------------------------------------------------- #
@@ -465,6 +556,26 @@ class FacilityView(_View):
     def equip(self) -> EquipView:
         return EquipView(self.__engine._fac_equip(self.__fac))
 
+    def _equip_values(self) -> dict:
+        """Os valores de ``equip`` para o snapshot, SEM materializar
+        o dict preguiçoso da instalação: se ele ainda não existe,
+        devolve os valores canônicos que a primeira leitura criaria
+        (os mesmos de ``Engine._fac_equip``) — fotografar não pode
+        escrever no mundo."""
+        eq = self.__fac.get("equip")
+        if eq is None:
+            return {"age": 0, "cond": 1.0, "broken": False,
+                    "down_until": -1, "repair_cost": 0.0,
+                    "repair_ticks": 0}
+        return {k: eq[k] for k in ("age", "cond", "broken",
+                                   "down_until", "repair_cost",
+                                   "repair_ticks")}
+
+    def to_snapshot(self, with_equip: bool) -> dict:
+        return {"id": self.id, "kind": self.kind,
+                "cell": list(self.cell), "deposit": self.deposit,
+                "equip": self._equip_values() if with_equip else None}
+
     def __repr__(self) -> str:
         return f"FacilityView({self.__fac['id']!r}, {self.__fac['kind']!r})"
 
@@ -560,6 +671,30 @@ class CompanyView(_View):
 
     def chain_stage(self) -> int:
         return self.__comp.chain_stage()
+
+    def to_snapshot(self, with_equip: bool) -> dict:
+        tools = self.__tools
+        return {
+            "cid": self.cid, "name": self.name,
+            "archetype": self.archetype, "hq_city": self.hq_city,
+            "color": self.color, "alive": self.alive,
+            "founded_tick": self.founded_tick,
+            "cash": self.cash,
+            "traits": _jsonify(self.__traits),
+            "stocks": _jsonify(dict(self.__stocks.items())),
+            "knowledge": _jsonify(dict(self.__knowledge.items())),
+            "claimed": [list(cell) for cell in
+                        sorted(self.__claimed)],
+            "tools": {"insta_until": tools.insta_until,
+                      "insta_strength": tools.insta_strength,
+                      "zap_until": tools.zap_until,
+                      "vid_until": tools.vid_until,
+                      "loja_until": tools.loja_until},
+            "hq": self.__hq.to_snapshot(),
+            "facilities": [f.to_snapshot(with_equip)
+                           for f in self.__facilities],
+            "chain_stage": self.chain_stage(),
+        }
 
     def __repr__(self) -> str:
         return f"CompanyView({self.__comp.name!r})"
@@ -711,6 +846,27 @@ class Observation(_View):
     def rng(self) -> RandomFacade:
         return self.__rng
 
+    def to_snapshot(self) -> dict:
+        """A fotografia serializável desta decisão (fatia 2, SPEC
+        §4): só valores — ``dict``/``list``/``str``/``int``/``float``/
+        ``bool``/``None``, sem nenhuma referência viva — capturando
+        fielmente o que a política viu neste instante: ``me`` (a
+        focal por dentro) e ``world`` (o público, incluindo as
+        séries públicas do mercado vivo). É função de LEITURA pura:
+        não chama verbos, não sorteia, não materializa estado
+        preguiçoso — rodar um episódio fotografando cada decisão
+        reproduz o episódio sem fotografia, bit a bit.
+
+        ``act`` e ``rng`` ficam fora DE PROPÓSITO: são capacidades
+        (verbos e sorteio como serviço), não observação — um
+        snapshot que os carregasse vazaria o motor em si. Pelo mesmo
+        motivo o snapshot herda o fog-of-war da superfície: só entra
+        o que as views já expõem legitimamente (nada de grade/size
+        crus, de futuro agendado, de estado de rival)."""
+        return {"me": self.__me.to_snapshot(
+                    with_equip=self.__world.equip_v2),
+                "world": self.__world.to_snapshot()}
+
 
 def build_company_view(engine, comp: Company) -> CompanyView:
     """A view da focal (usada sozinha pelas fachadas baratas do
@@ -742,10 +898,20 @@ def build_observation(engine, comp: Company) -> Observation:
     if engine.equip_v2 and engine._equip is not None:
         equip_policy = MappingProxyType(engine._equip["policy"])
         equip_model = MappingProxyType(engine._equip["model"])
+    anchors = MappingProxyType({})
+    price_history = MappingProxyType({})
+    if engine.market_v2:
+        # séries públicas do B1 (fatia 2): cópias do instante da
+        # decisão — âncora e anel de preços não mudam durante as
+        # decisões de um tick, então a cópia É o valor da decisão
+        anchors = MappingProxyType(dict(engine.anchors))
+        price_history = MappingProxyType(
+            {c: tuple(ring) for c, ring in engine._price_ring.items()})
     world = WorldView(
         tick=engine.tick, market_v2=engine.market_v2,
         country_v2=engine.country_v2, equip_v2=engine.equip_v2,
         prices=MappingProxyType(engine.prices),
+        anchors=anchors, price_history=price_history,
         deposits=deposits, cities=cities, countries=countries,
         capex=capex, equip_policy=equip_policy,
         equip_model=equip_model)
