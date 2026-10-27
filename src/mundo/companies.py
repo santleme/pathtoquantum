@@ -12,11 +12,66 @@ sondou (knowledge). Decisão nenhuma lê a verdade oculta do mundo.
 """
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 
 from . import chain
 from .tools_sim import ToolEffects
 from .world import CITIES, DEPOSITS, cell_center
+
+
+class StockBook(MutableMapping):
+    """Estoques de uma empresa: array plano indexado por commodity.
+
+    Fundação struct-of-arrays (DEGRAU1-DESIGN §3.1, hotspot 4 do
+    estudo de motor): por dentro é UMA lista de floats na ordem de
+    ``chain.COMMODITIES`` — a linha da tabela ``stocks (N, C)`` do
+    design. Por fora continua um ``Mapping[str, float]`` completo
+    (``book[c]``, ``book[c] += x``, ``dict(book)``, ``book.items()``),
+    então código por nome não muda. Os acessos quentes usam o índice
+    inteiro direto: ``at(i)`` / ``add(i, delta)``.
+    """
+
+    __slots__ = ("_arr",)
+
+    def __init__(self, initial: dict | None = None):
+        self._arr = [0.0] * chain.N_COMMODITIES
+        if initial:
+            for name, qty in initial.items():
+                self._arr[chain.COMMODITY_INDEX[name]] = float(qty)
+
+    # -- protocolo Mapping (por nome) -----------------------------------
+    def __getitem__(self, name: str) -> float:
+        return self._arr[chain.COMMODITY_INDEX[name]]
+
+    def __setitem__(self, name: str, qty: float) -> None:
+        self._arr[chain.COMMODITY_INDEX[name]] = float(qty)
+
+    def __delitem__(self, name: str) -> None:
+        raise TypeError("o conjunto de commodities é fixo (tabela SoA)")
+
+    def __iter__(self):
+        return iter(chain.COMMODITIES)
+
+    def __len__(self) -> int:
+        return chain.N_COMMODITIES
+
+    def __repr__(self) -> str:
+        return f"StockBook({dict(self)!r})"
+
+    # -- acesso por índice inteiro (o caminho quente) --------------------
+    def at(self, idx: int) -> float:
+        return self._arr[idx]
+
+    def set_at(self, idx: int, qty: float) -> None:
+        self._arr[idx] = float(qty)
+
+    def add(self, idx: int, delta: float) -> None:
+        self._arr[idx] += delta
+
+    def to_list(self) -> list[float]:
+        """Cópia do array na ordem de ``chain.COMMODITIES``."""
+        return list(self._arr)
 
 PALETTE = ["#e63946", "#f4a261", "#2a9d8f", "#457b9d",
            "#9b5de5", "#f15bb5", "#00bbf9", "#8ac926"]
@@ -43,7 +98,7 @@ class Company:
     hq_city: str
     color: str
     cash: float
-    stocks: dict = field(default_factory=lambda: {c: 0.0 for c in chain.COMMODITIES})
+    stocks: StockBook = field(default_factory=StockBook)
     facilities: dict = field(default_factory=dict)   # fac_id -> facility dict
     claimed: set = field(default_factory=set)        # células reivindicadas
     knowledge: dict = field(default_factory=dict)    # dep_name -> (grade, size_t)

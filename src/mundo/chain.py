@@ -56,3 +56,9 @@ OPERATING_COST = {  # US$ por unidade processada (pago ao "mundo", sink)
 CLAIM_COST = 200_000.0
 PROBE_COST = 150_000.0
 COMMODITIES = list(BASE_PRICES.keys())
+
+# Fundação struct-of-arrays (DEGRAU1-DESIGN §3.1): toda tabela numérica
+# do mundo indexa commodities por ESTE índice inteiro, nunca por nome.
+# A ordem é a de COMMODITIES — mudar a ordem muda o layout das tabelas.
+COMMODITY_INDEX = {c: i for i, c in enumerate(COMMODITIES)}
+N_COMMODITIES = len(COMMODITIES)

@@ -13,7 +13,7 @@ from dataclasses import asdict
 
 from . import chain
 from .chronicle import Chronicle, Event, sim_date
-from .companies import Company, make_companies
+from .companies import Company, StockBook, make_companies
 from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
                         LOJA_DURATION_TICKS, LOJA_FEE_PCT, VID_DEMAND_WEIGHT,
                         VID_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
@@ -298,7 +298,7 @@ def _company_from_state(cs: dict) -> Company:
     comp = Company(cid=cs["cid"], name=cs["name"],
                    archetype=cs["archetype"], traits=dict(cs["traits"]),
                    hq_city=cs["hq_city"], color=cs["color"], cash=cs["cash"])
-    comp.stocks = dict(cs["stocks"])
+    comp.stocks = StockBook(cs["stocks"])
     comp.facilities = {fid: {"id": f["id"], "kind": f["kind"],
                              "cell": tuple(f["cell"]),
                              **({"deposit": f["deposit"]}
@@ -431,8 +431,8 @@ class Engine:
 
     def _convert(self, comp: Company, src: str, qty_in: float,
                  dst: str, qty_out: float) -> None:
-        comp.stocks[src] -= qty_in
-        comp.stocks[dst] += qty_out
+        comp.stocks.add(chain.COMMODITY_INDEX[src], -qty_in)
+        comp.stocks.add(chain.COMMODITY_INDEX[dst], qty_out)
         self.ledger_mass[src]["consumed"] += qty_in
         self.ledger_mass[src]["wasted"] += max(0.0, qty_in - qty_out)
         self.ledger_mass[dst]["produced"] += qty_out
@@ -583,7 +583,7 @@ class Engine:
                 self.remaining[dep.name] -= crude
                 payable = crude * dep.grade
                 waste = crude - payable
-                comp.stocks[dep.resource] += payable
+                comp.stocks.add(chain.COMMODITY_INDEX[dep.resource], payable)
                 self.ledger_mass[dep.resource]["extracted"] += payable
                 self.ledger_mass[dep.resource]["wasted"] += waste
                 self._spend(comp, crude * cost, reason="ops")
@@ -611,9 +611,10 @@ class Engine:
                     continue
                 for inp, per in recipe["inputs"].items():
                     qty = units * per
-                    comp.stocks[inp] -= qty
+                    comp.stocks.add(chain.COMMODITY_INDEX[inp], -qty)
                     self.ledger_mass[inp]["consumed"] += qty
-                comp.stocks[product] += units * recipe["out"]
+                comp.stocks.add(chain.COMMODITY_INDEX[product],
+                                units * recipe["out"])
                 self.ledger_mass[product]["produced"] += units * recipe["out"]
                 self._spend(comp, units * cost, reason="ops")
                 if product == "supercomputer":
@@ -628,6 +629,7 @@ class Engine:
     def _market(self) -> None:
         for commodity in _COMMODITIES_SORTED:
             price = self.prices[commodity]
+            ci = chain.COMMODITY_INDEX[commodity]
             # coleta única: ofertas e compras na ordem das empresas vivas
             # (listas e somas idênticas às da versão em duas passagens)
             offers, buys = [], []
@@ -660,8 +662,8 @@ class Engine:
                                 buyer.cash / price if price > 0 else 0.0)
                     if share <= 0.0001:
                         continue
-                    seller.stocks[commodity] -= share
-                    buyer.stocks[commodity] += share
+                    seller.stocks.add(ci, -share)
+                    buyer.stocks.add(ci, share)
                     seller.cash += share * price
                     buyer.cash -= share * price
                     self._flow(seller.cid, "trade_in", share * price)
@@ -696,7 +698,7 @@ class Engine:
                               city_q * weights[seller.cid] / wsum)
                     if qty <= 0.0001:
                         continue
-                    seller.stocks[commodity] -= qty
+                    seller.stocks.add(ci, -qty)
                     seller.cash += qty * price
                     self._flow(seller.cid, "city_sales", qty * price)
                     self.money_in += qty * price
@@ -764,9 +766,9 @@ class Engine:
                 for cell in comp.claimed:
                     buyer.claimed.add(cell)
                     self.claimed_by[cell] = buyer.cid
-                for c_name in chain.COMMODITIES:
-                    buyer.stocks[c_name] += comp.stocks[c_name]
-                    comp.stocks[c_name] = 0.0
+                for ci in range(chain.N_COMMODITIES):
+                    buyer.stocks.add(ci, comp.stocks.at(ci))
+                    comp.stocks.set_at(ci, 0.0)
                 comp.facilities = {}
                 buyer._sync_kinds()
                 comp._sync_kinds()
