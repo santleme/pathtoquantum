@@ -16,24 +16,36 @@ def test_schema_loads():
     assert DATA.compiled_at == "2026-10-26"
 
 
-def test_ten_deposits_eight_cities():
-    assert len(DATA.deposits) == 10
-    assert len(DATA.cities) == 8
+NEW_DEPOSITS_V1 = ["Salar del Hombre Muerto", "Cerro Verde (Arequipa)",
+                   "El Mutún"]
+NEW_CITIES_V1 = ["Montevidéu", "Assunção", "Medellín"]
+
+
+def test_thirteen_deposits_eleven_cities():
+    # v0: 10 depósitos/8 cidades; v1 adicionou 3 + 3 (só no dataset real —
+    # o fallback builtin do world.py continua sendo o mundo v0).
+    assert len(DATA.deposits) == 13
+    assert len(DATA.cities) == 11
 
 
 def test_names_match_world_v0():
-    assert [d.name for d in DATA.deposits] == [d.name for d in world.DEPOSITS]
-    assert [c.name for c in DATA.cities] == [c.name for c in world.CITIES]
+    # as entradas do v0 vêm primeiro e intactas; as do v1 são acréscimos
+    assert [d.name for d in DATA.deposits[:10]] == \
+        [d.name for d in world.DEPOSITS]
+    assert [c.name for c in DATA.cities[:8]] == \
+        [c.name for c in world.CITIES]
+    assert [d.name for d in DATA.deposits[10:]] == NEW_DEPOSITS_V1
+    assert [c.name for c in DATA.cities[8:]] == NEW_CITIES_V1
 
 
 def test_positions_match_world_v0():
     v0_dep = {d.name: d for d in world.DEPOSITS}
-    for d in DATA.deposits:
+    for d in DATA.deposits[:10]:
         assert d.lat == v0_dep[d.name].lat
         assert d.lon == v0_dep[d.name].lon
         assert d.resource == v0_dep[d.name].resource
     v0_city = {c.name: c for c in world.CITIES}
-    for c in DATA.cities:
+    for c in DATA.cities[:8]:
         assert c.lat == v0_city[c.name].lat
         assert c.lon == v0_city[c.name].lon
 
@@ -100,7 +112,8 @@ def test_estimated_flags_are_bool():
 
 def test_adapter_deposits_match_world_schema():
     deps = realdata.to_world_deposits(DATA)
-    assert len(deps) == len(world.DEPOSITS)
+    assert len(deps) == 13
+    assert len(deps) > len(world.DEPOSITS)   # o dataset v1 é maior que o v0
     for d in deps:
         assert isinstance(d, world.Deposit)
         assert d.size_t > 0

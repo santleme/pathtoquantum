@@ -24,9 +24,13 @@ Se dinheiro não existisse, é isto que ele construiria. Então é isto.
 
 ## O que o v0 é
 
-- **Terra real**: grade lat/lon da América do Sul; depósitos reais em
-  posições reais (Atacama, Uyuni, Escondida, Carajás, Quadrilátero,
-  pré-sal, Vaca Muerta...); cidades reais como mercados. Toneladas e US$.
+- **Terra real**: grade lat/lon da América do Sul (30×22 células desde o
+  v1); depósitos reais em posições reais (Atacama, Uyuni, Escondida,
+  Carajás, Quadrilátero, pré-sal, Vaca Muerta, Hombre Muerto, Cerro Verde,
+  El Mutún...); cidades reais como mercados. Toneladas e US$. O mundo
+  padrão (v1) tem 13 depósitos e 11 cidades, vindos do dataset real
+  (`data/world_data.json`); o fallback embutido (`world_data=False`)
+  preserva o mundo v0 exato (10 depósitos, 8 cidades).
 - **Empresas autônomas (8)**: caixa, sede, personalidade (agressividade,
   risco, obsessão por verticalizar, marketing) e política heurística —
   nenhum LLM por tick. Elas sondam (o subsolo é fog-of-war: teor e
@@ -37,8 +41,11 @@ Se dinheiro não existisse, é isto que ele construiria. Então é isto.
   supercomputador → ... → **computador quântico**, a corrida de fundo
   deste mundo (declarada aqui; elos finais entram em versões futuras).
 - **Ferramentas simuladas com custo realista**: InstaSim (CPM ~US$ 9/mil,
-  eleva a demanda da empresa) e ZapSim (custo por conversa, eleva a
-  conversão). Dinheiro de verdade dentro do mundo, efeito mensurável.
+  eleva a demanda da empresa), ZapSim (custo por conversa, eleva a
+  conversão), VidSim (estúdio de vídeo, v1: US$ 24 mil/campanha, demanda
+  forte e longa nos produtos de elo alto) e LojaSim (marketplace, v1:
+  US$ 5 mil de loja + 13% de comissão sobre vendas de dispositivos).
+  Dinheiro de verdade dentro do mundo, efeito mensurável.
 - **A Crônica**: cada evento relevante vira história datada — fundações,
   sondagens, marcos de cadeia, campanhas, falências, aquisições, atos de
   Deus. A crônica é o show; o placar é o campeonato.
@@ -66,7 +73,7 @@ se organiza em eras nomeadas pelo fundador:
 
 `src/mundo/`: `world.py` (mapa/dados reais) · `chain.py` (árvore de
 produção, preços, instalações) · `companies.py` (agentes/personalidades) ·
-`tools_sim.py` (InstaSim/ZapSim) · `engine.py` (ticks, mercado, ledger de
+`tools_sim.py` (InstaSim/ZapSim/VidSim/LojaSim) · `engine.py` (ticks, mercado, ledger de
 conservação) · `chronicle.py` (eventos/história) · `cli.py` (o painel de
 Deus). `viewer/index.html`: player dos frames (mapa, placar, crônica).
 Desenho completo do sistema em `docs/SDD.md`.

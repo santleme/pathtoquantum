@@ -123,14 +123,28 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv[1:])
 
     if args.bundle_src:
-        import shutil, subprocess, tempfile
+        # O helper de datasets sobe só arquivos do topo da pasta (subpastas
+        # sao ignoradas) — por isso o fonte vai como UM zip (mundo-src.zip,
+        # com src/ + pyproject.toml na raiz), que o notebook descompacta.
+        # Dataset novo a cada bundle (sem CreateDatasetVersion no helper):
+        # incremente SRC_DATASET quando o slug abaixo ja existir.
+        import subprocess, tempfile, zipfile
         bundle = Path(tempfile.mkdtemp(prefix="mundo-src-"))
-        shutil.copytree(REPO / "src", bundle / "src")
-        shutil.copy2(REPO / "pyproject.toml", bundle / "pyproject.toml")
+        with zipfile.ZipFile(bundle / "mundo-src.zip", "w",
+                             zipfile.ZIP_DEFLATED) as zf:
+            for f in sorted((REPO / "src").rglob("*")):
+                if f.is_file() and "__pycache__" not in f.parts:
+                    zf.write(f, f.relative_to(REPO))
+            zf.write(REPO / "pyproject.toml", "pyproject.toml")
+        (bundle / "dataset-metadata.json").write_text(json.dumps({
+            "title": "Mundo Autonomo Src 2",
+            "id": "pascalcoimbra/mundo-autonomo-src2",
+            "licenses": [{"name": "other"}],
+        }), encoding="utf-8")
         helper = "/home/hatch/workspace/custom-connectors/custom.kaggle/bin/kaggle_api.py"
         print(f"criando dataset do fonte a partir de {bundle} ...")
         r = subprocess.run([sys.executable, helper, "create-dataset",
-                            str(bundle), "--title", "Mundo Autonomo Src"],
+                            str(bundle), "--title", "Mundo Autonomo Src 2"],
                            capture_output=True, text=True, timeout=300)
         print(r.stdout[-600:] or r.stderr[-600:])
         if r.returncode != 0:

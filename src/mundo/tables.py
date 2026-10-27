@@ -1,0 +1,78 @@
+"""Projeção struct-of-arrays do estado do motor (DEGRAU1-DESIGN §3.1).
+
+As tabelas numéricas do design — ``cash (N,)``, ``stocks (N, C)``,
+``prices/anchor (C,)`` — materializadas a partir do motor oficial.
+É a ponte que o núcleo nativo (Fase 5), o Numba e os drivers de
+treino consomem: quem lê tabelas não toca nos objetos do motor.
+
+Somente leitura e sem efeitos: montar as tabelas não muta o motor,
+não consome RNG e não emite eventos. Linhas seguem a ordem de
+``engine.companies``; colunas, a de ``chain.COMMODITIES``.
+"""
+from __future__ import annotations
+
+import numpy as np
+
+from . import chain
+
+
+def cash_table(engine) -> np.ndarray:
+    """Caixa por empresa: vetor f64 de forma (N,)."""
+    return np.array([c.cash for c in engine.companies], dtype=np.float64)
+
+
+def stocks_table(engine) -> np.ndarray:
+    """Estoques por empresa × commodity: matriz f64 de forma (N, C)."""
+    rows = [c.stocks.to_list() for c in engine.companies]
+    return np.array(rows, dtype=np.float64).reshape(
+        len(engine.companies), chain.N_COMMODITIES)
+
+
+def prices_table(engine) -> np.ndarray:
+    """Preço corrente por commodity: vetor f64 de forma (C,)."""
+    return np.array([engine.prices[c] for c in chain.COMMODITIES],
+                    dtype=np.float64)
+
+
+def anchors_table(engine) -> np.ndarray:
+    """Âncora de preço p* por commodity (série pública do B1): (C,).
+
+    Sem mercado vivo, a âncora é o preço-base (constante)."""
+    anchors = getattr(engine, "anchors", None) or chain.BASE_PRICES
+    return np.array([anchors[c] for c in chain.COMMODITIES],
+                    dtype=np.float64)
+
+
+def countries_table(engine) -> tuple[list[str], np.ndarray]:
+    """Índices públicos por país (B3): (nomes ordenados, matriz (P, 3)).
+
+    Colunas: estabilidade S, câmbio-índice e, royalties τ — a linha
+    ``stab/fx/royalty (P,)`` do design §3.1, em três vetores fatiáveis.
+    Sem country_v2, devolve ([], matriz vazia)."""
+    countries = getattr(engine, "_countries", None) or {}
+    names = sorted(countries)
+    rows = [[countries[n]["S"], countries[n]["fx"], countries[n]["tau"]]
+            for n in names]
+    return names, np.array(rows, dtype=np.float64).reshape(len(names), 3)
+
+
+def facilities_table(engine) -> tuple[list[str], np.ndarray]:
+    """Instalações e o estado B2 (design §3.1: fac_age/fac_cond/
+    fac_down_until): (ids na ordem (dono, criação), matriz (F, 4)).
+
+    Colunas: cid do dono, idade (meses), condição h, parada (0/1 —
+    quebrada ou em oficina). A projeção LÊ o estado, não o inventa:
+    sem equip_v2 (ou instalação nunca operada sob o B2), idade e
+    condição são os defaults (0, 1,0) e nada está parado."""
+    ids: list[str] = []
+    rows: list[list[float]] = []
+    for c in engine.companies:
+        for fid, fac in c.facilities.items():
+            eq = fac.get("equip") or {}
+            down = 1.0 if (eq.get("broken")
+                           or (eq and engine.tick
+                               <= eq.get("down_until", -1))) else 0.0
+            ids.append(fid)
+            rows.append([float(c.cid), float(eq.get("age", 0)),
+                         float(eq.get("cond", 1.0)), down])
+    return ids, np.array(rows, dtype=np.float64).reshape(len(ids), 4)

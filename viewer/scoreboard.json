@@ -3,7 +3,23 @@
   "name": "Vetor Sul",
   "archetype": "Verticalizadora",
   "alive": true,
-  "cash": 50308957.75,
+  "cash": 273034538.37,
+  "stage": 4,
+  "facilities": 5
+ },
+ {
+  "name": "Ferra Brasil",
+  "archetype": "Cautelosa",
+  "alive": true,
+  "cash": 70152751.39,
+  "stage": 2,
+  "facilities": 2
+ },
+ {
+  "name": "Cuprum Andes",
+  "archetype": "Marqueteira",
+  "alive": true,
+  "cash": 60213158.5,
   "stage": 4,
   "facilities": 5
  },
@@ -19,15 +35,7 @@
   "name": "PetroPlata",
   "archetype": "Industrial",
   "alive": true,
-  "cash": 39696133.11,
-  "stage": 2,
-  "facilities": 2
- },
- {
-  "name": "Ferra Brasil",
-  "archetype": "Cautelosa",
-  "alive": true,
-  "cash": 38863966.66,
+  "cash": 38468553.11,
   "stage": 2,
   "facilities": 2
  },
@@ -40,10 +48,10 @@
   "facilities": 0
  },
  {
-  "name": "Cuprum Andes",
-  "archetype": "Marqueteira",
+  "name": "Nexo Indústrias",
+  "archetype": "Oportunista",
   "alive": true,
-  "cash": 21801050.02,
+  "cash": 20481754.54,
   "stage": 4,
   "facilities": 5
  },
@@ -51,15 +59,7 @@
   "name": "Órbita Systems",
   "archetype": "Visionária",
   "alive": true,
-  "cash": 15225667.86,
-  "stage": 4,
-  "facilities": 5
- },
- {
-  "name": "Nexo Indústrias",
-  "archetype": "Oportunista",
-  "alive": true,
-  "cash": 12038241.8,
+  "cash": 15890699.01,
   "stage": 4,
   "facilities": 5
  }
