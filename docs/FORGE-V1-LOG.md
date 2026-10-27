@@ -73,4 +73,29 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
 
 ## Registro de execução
 
-(preencher no lançamento: bundle, kernel, sonda de secrets, monitor)
+- **Bundle**: `pascalcoimbra/mundo-autonomo-src12` (src/ + forge/ +
+  pyproject.toml), criado e **verificado por download** —
+  `forge/llm_mutator.py`, `forge/run.py`,
+  `forge/tournament_champion.json` e `src/mundo/program.py` com md5
+  idêntico ao repo (36 arquivos no zip).
+- **Kernel**: `pascalcoimbra/ptq-forge-v1` (kernelId 141168190),
+  versão 1, internet habilitada, dataset src12 anexado sem fontes
+  inválidas. Push via `scripts/kaggle_push_kernel.py`
+  (build_payload/push) com o metadata
+  `notebooks/kernel-metadata-forge-v1.json`.
+- **Largada (27/10/2026, ~10:05)**: loader recursivo achou o bundle,
+  `forge/` completa conferida — e a **sonda de secrets respondeu
+  AUSENTE para as duas chaves** (GEMINI_API_KEY e GROQ_API_KEY). O
+  notebook imprimiu o bloqueio pré-registrado
+  `FORGE-V1: BLOQUEADO — secrets ausentes` e terminou limpo, sem
+  erro: o fundador tem as chaves, mas elas ainda não estão
+  cadastradas como Secrets deste kernel.
+- **Próximo passo (ação do fundador)**: cadastrar GEMINI_API_KEY
+  e/ou GROQ_API_KEY como Secrets do kernel e relançar — a corrida
+  roda sem mudar uma linha. Monitor `monitor-forge-v1` (15 min)
+  acompanha e reporta o bloqueio/veredito nesta conversa.
+- **Suíte no lançamento**: 252/252 (240 da guarda v2 + 12 novos:
+  adaptador LLM mockado, barras do veredito, linhagem/top-diffs e
+  mini-corrida ponta a ponta com avaliação cega em blocos tiny).
+- Branch: `forja/forge-v1` (commits 73eb02c + c9e32de + este
+  registro), a partir de `obs/guarda-v2` @ 5cc1b31.
