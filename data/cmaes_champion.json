@@ -1,0 +1,29 @@
+{
+ "policy_id": "evo:6a94b587701d",
+ "genome_hash": "6a94b587701d",
+ "genome": [
+  549777.7737747484,
+  1480104.1482253096,
+  3.0840730818067623,
+  5.0,
+  0.0,
+  1548896.6768886147,
+  0.5874472350538724,
+  0.2609165311513107,
+  158.771979915598,
+  412599.6544295127,
+  1315107.104199299,
+  5.0,
+  88.36627060646528,
+  8252625.466243745,
+  0.4852349335012723,
+  0.2,
+  2.128244800995545,
+  1.2402135991624992,
+  0.9710406423808684,
+  0.2919059166465636
+ ],
+ "selection_S": 0.563,
+ "provenance": "Torneio de politicas v1 (kernel pascalcoimbra/ptq-torneio-de-politicas-v1, RUN_FINAL): CMA-ES em liga, 8192 episodios de treino, 128 de selecao, avaliacao final em 64 blocos pareados nas seeds de teste. Copiado de results/torneio-v1/genomas_campeoes.json (gitignored, so disco) para que o bundle da corrida forge-v1 (#6) carregue o baseline sem depender de arquivo fora do repo.",
+ "note": "Baseline da #6: o veredito usa o MELHOR baseline entre v0 e este genoma, com delta pareado de verdade contra cada um (forge/blind.py)."
+}

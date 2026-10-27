@@ -31,14 +31,24 @@
   .row.dead { opacity:.45; text-decoration: line-through; }
   .stage { color:var(--dim); font-size:11px; }
   #feed { flex:1; overflow-y:auto; padding:0 12px 12px; font-size:12.5px; line-height:1.45; }
-  #feed .ev { padding:5px 0; border-bottom:1px solid #1b2540; }
+  #feed .ev { padding:5px 0; border-bottom:1px solid #1b2540; cursor:pointer; }
+  #feed .ev:hover { background:#1b2540; }
   #feed .ev b { color:#ffd166; font-weight:600; }
   .legend { font-size:11px; color:var(--dim); padding:6px 16px; }
+  #forge { padding:0 12px 10px; font-size:12.5px; }
+  #forge .verdict { font-size:13.5px; padding:4px 0 2px; }
+  #forge .chips { display:flex; flex-wrap:wrap; gap:6px; padding:5px 0; }
+  #forge .chip { border:1px solid var(--line); border-radius:999px; padding:2px 9px;
+                 font-size:11.5px; background:#1c2742; }
+  #forge .chip b { color:#ffd166; font-weight:600; }
+  #forge h3 { font-size:11px; text-transform:uppercase; letter-spacing:.12em;
+              color:var(--dim); margin:10px 0 2px; }
 </style>
 </head>
 <body>
 <header>
   <h1>🌎 MUNDO AUTÔNOMO</h1>
+  <span class="date" id="runlabel"></span>
   <span class="date" id="date">—</span>
   <button id="play">⏸ pausar</button>
   <label>velocidade
@@ -53,6 +63,10 @@
   <aside>
     <h2>Placar das empresas</h2>
     <div id="board"></div>
+    <h2 id="comparetitle" style="display:none">Comparar corridas</h2>
+    <div id="compare"></div>
+    <h2 id="forgetitle" style="display:none">🔥 Painel da forja</h2>
+    <div id="forge"></div>
     <h2>Crônica do mundo</h2>
     <div id="feed"></div>
   </aside>
@@ -70,6 +84,23 @@ function load(data) {
   render(); play();
 }
 function frame() { return DATA.frames[idx]; }
+
+// Índice do último frame com tick <= o pedido (0 se nenhum).
+function frameIndexForTick(tick) {
+  let found = 0;
+  for (let i = 0; i < DATA.frames.length; i++) {
+    if (DATA.frames[i].tick <= tick) found = i; else break;
+  }
+  return found;
+}
+
+// "Câmera nos marcos": clicar num evento da crônica pausa o replay e
+// salta para o frame daquele tick.
+function jumpToTick(tick) {
+  if (timer) { clearInterval(timer); timer = null; $('play').textContent = '▶ tocar'; }
+  idx = frameIndexForTick(tick);
+  render();
+}
 
 function render() {
   if (!DATA) return;
@@ -132,10 +163,183 @@ function drawBoard(f) {
   $('board').innerHTML = rows;
 }
 
+// Comparador de corridas (issue D, fatia 2): compara o ÚLTIMO frame de
+// duas corridas, empresa por empresa (pelo nome). Não toca no replay: sem
+// ?compare, nada muda; com ?compare, só preenche #compare.
+// Retorna { rows, totalA, totalB } para teste estrutural.
+function compareRuns(framesA, framesB) {
+  const last = frames => frames[frames.length - 1];
+  const byName = f => Object.fromEntries(last(f).companies.map(c => [c.name, c]));
+  const A = byName(framesA), B = byName(framesB);
+  const names = [...new Set([...Object.keys(A), ...Object.keys(B)])].sort();
+  const rows = names.map(name => ({
+    name,
+    cashA: A[name] ? A[name].cash : null,
+    cashB: B[name] ? B[name].cash : null,
+    delta: (A[name] && B[name]) ? B[name].cash - A[name].cash : null,
+    stageA: A[name] ? A[name].stage : null,
+    stageB: B[name] ? B[name].stage : null,
+    aliveA: A[name] ? A[name].alive : null,
+    aliveB: B[name] ? B[name].alive : null,
+  }));
+  const total = m => rows.reduce((s, r) => s + (r[m] || 0), 0);
+  return { rows, totalA: total('cashA'), totalB: total('cashB') };
+}
+
+function renderCompare(cmp, labelB) {
+  $('comparetitle').style.display = '';
+  const money = v => v === null ? '—' : 'US$ ' + (v / 1e6).toFixed(1) + 'M';
+  const rows = cmp.rows.map(r => {
+    const d = r.delta === null ? '—'
+      : (r.delta >= 0 ? '+' : '−') + 'US$ ' + (Math.abs(r.delta) / 1e6).toFixed(1) + 'M';
+    const color = r.delta === null ? '' : (r.delta >= 0 ? '#9ae6b4' : '#f87171');
+    return `<div class="row"><span class="dot" style="background:#26304d"></span>
+     <span>${r.name}<br><span class="stage">elo: ${STAGE[r.stageA] ?? '—'} → ${STAGE[r.stageB] ?? '—'}</span></span>
+     <span>${money(r.cashA)} → ${money(r.cashB)}<br>
+     <span style="color:${color}">${d}</span></span></div>`;
+  }).join('');
+  $('compare').innerHTML = `<div class="row"><span></span><span>segunda corrida: ${labelB}</span>
+   <span>${money(cmp.totalA)} → ${money(cmp.totalB)}</span></div>` + rows;
+}
+
+// Painel da forja (issue #6): resume uma corrida da forja de políticas a
+// partir dos artefatos dela — forge-v1.json (campeão, contagens, mutador),
+// final_evaluation.json (avaliação cega) e run_log.jsonl (linha do tempo).
+// Funções puras + render, no espírito do compareRuns; tolerante a campos
+// ausentes: artefato parcial ou antigo degrada para '—', nunca quebra.
+function escForge(s) {
+  return String(s).replace(/[&<>"]/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function parseRunLog(text) {
+  if (!text) return [];
+  const out = [];
+  for (const line of String(text).split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try { out.push(JSON.parse(t)); } catch { /* linha quebrada: ignora */ }
+  }
+  return out;
+}
+
+// Linha do tempo: só as iterações ACEITAS, na ordem do log.
+function forgeTimeline(entries) {
+  return (entries || []).filter(e => e && e.status === 'accepted').map(e => ({
+    iteration: e.iteration ?? null,
+    hash: e.hash ?? null,
+    S1: e.S1 ?? null,
+    island: e.island ?? null,
+  }));
+}
+
+function summarizeForge(forge, finalEval, entries) {
+  forge = forge || {};
+  const fe = (finalEval && Object.keys(finalEval).length)
+    ? finalEval : (forge.final_evaluation || {});
+  const champ = forge.champion || {};
+  const delta = d => d ? { mean: d.mean ?? null, ci95: d.ci95 ?? null } : null;
+  const log = (entries && entries.length) ? entries : (forge.records || []);
+  return {
+    champion: {
+      hash: champ.hash ?? forge.champion_hash ?? fe.champion_hash ?? null,
+      S1: champ.S1 ?? null,
+      S2: champ.S2 ?? null,
+    },
+    seedResult: forge.seed_result ? {
+      hash: forge.seed_result.hash ?? null,
+      S1: forge.seed_result.S1 ?? null,
+      S2: forge.seed_result.S2 ?? null,
+    } : null,
+    verdict: forge.verdict ?? (fe.verdict ? 'FORGE-V1: ' + fe.verdict : null),
+    iterationsCompleted: forge.iterations_completed ?? forge.iterations ?? null,
+    mutator: forge.mutator ?? null,
+    counts: forge.counts ?? null,
+    mutatorStats: forge.mutator_stats ?? null,
+    blind: {
+      tournamentChampion: fe.tournament_champion ?? null,
+      meanS: fe.mean_S ?? null,
+      vsTournament: delta(fe.delta_vs_tournament),
+      vsSeed: delta(fe.delta_vs_seed),
+    },
+    timeline: forgeTimeline(log),
+  };
+}
+
+function renderForge(sum, label) {
+  $('forgetitle').style.display = '';
+  const num = v => (v === null || v === undefined) ? '—' : (+v).toFixed(4);
+  const sgn = v => (v === null || v === undefined) ? '—'
+    : (v < 0 ? '−' : '+') + Math.abs(v).toFixed(4);
+  const ci = d => (d && d.ci95) ? ` <span class="stage">IC95 [${num(d.ci95[0])}, ${num(d.ci95[1])}]</span>` : '';
+  const row = (k, v) => `<div class="row"><span></span><span>${k}</span><span>${v}</span></div>`;
+  const prog = h => h ? 'prog:' + escForge(h) : '—';
+  let h = `<div class="row"><span></span><span>corrida da forja: ${escForge(label)}</span><span></span></div>`;
+  if (sum.verdict) {
+    const color = sum.verdict.includes('APROVADO') ? '#9ae6b4'
+      : sum.verdict.includes('BLOQUEADO') ? '#ffd166' : '#f87171';
+    h += `<div class="verdict" style="color:${color}"><b>${escForge(sum.verdict)}</b></div>`;
+  }
+  const done = sum.iterationsCompleted === null ? '' : ` · ${sum.iterationsCompleted} iterações`;
+  const mut = sum.mutator ? ` · mutador ${escForge(sum.mutator)}` : '';
+  h += `<h3>Campeão final${done}${mut}</h3>`;
+  h += row(prog(sum.champion.hash),
+           `S1 ${num(sum.champion.S1)} · S2 ${num(sum.champion.S2)}`);
+  if (sum.seedResult) {
+    h += row('semente ' + prog(sum.seedResult.hash),
+             `S1 ${num(sum.seedResult.S1)} · S2 ${num(sum.seedResult.S2)}`);
+  }
+  if (sum.counts) {
+    const c = sum.counts;
+    const chip = (k, label) => `<span class="chip">${label} <b>${c[k] ?? '—'}</b></span>`;
+    h += '<h3>Contagens</h3><div class="chips">'
+      + chip('accepted', 'aceitas') + chip('rejected_llm', 'rejeitadas (LLM)')
+      + chip('rejected_guard', 'rejeitadas (guarda)') + chip('error', 'erros')
+      + chip('duplicate', 'duplicadas') + '</div>';
+  }
+  const b = sum.blind;
+  if (b.vsTournament || b.vsSeed || b.meanS) {
+    h += '<h3>Avaliação cega</h3>';
+    if (b.tournamentChampion) {
+      h += row('campeão do torneio', escForge(b.tournamentChampion));
+    }
+    if (b.vsTournament) h += row('ΔS vs torneio', sgn(b.vsTournament.mean) + ci(b.vsTournament));
+    if (b.vsSeed) h += row('ΔS vs semente', sgn(b.vsSeed.mean) + ci(b.vsSeed));
+    if (b.meanS) {
+      const m = b.meanS;
+      const part = (k, label) => (m[k] === undefined ? '' : `${label} ${num(m[k])}`);
+      h += row('S médio no teste',
+               [part('forge_champion', 'forja'), part('seed', 'semente'),
+                part('tournament_champion', 'torneio')].filter(Boolean).join(' · '));
+    }
+  }
+  const st = sum.mutatorStats;
+  if (st) {
+    h += '<h3>Mutador</h3>';
+    if (st.calls) {
+      h += Object.entries(st.calls).sort((x, y) => y[1] - x[1]).map(([route, n]) =>
+        `<div class="row"><span></span><span>${escForge(route)}</span><span>${n} chamadas</span></div>`).join('');
+    }
+    const extra = Object.entries(st).filter(([k, v]) => k !== 'calls' && typeof v === 'number')
+      .map(([k, v]) => `<span class="chip">${escForge(k)} <b>${v}</b></span>`).join('');
+    if (extra) h += '<div class="chips">' + extra + '</div>';
+  }
+  h += '<h3>Linha do tempo — iterações aceitas</h3>';
+  h += sum.timeline.length ? sum.timeline.map(t =>
+    `<div class="row"><span class="dot" style="background:#9ae6b4"></span>
+     <span>#${t.iteration ?? '—'} · ${prog(t.hash)}<br>
+     <span class="stage">ilha ${t.island ?? '—'}</span></span>
+     <span>S1 ${num(t.S1)}</span></div>`).join('')
+    : '<div class="ev">Nenhuma iteração aceita no log.</div>';
+  $('forge').innerHTML = h;
+}
+
 function drawFeed(f) {
   const evs = DATA.chronicle.filter(e => e.tick <= f.tick);
   $('feed').innerHTML = evs.slice(-90).reverse().map(e =>
-    `<div class="ev"><b>${e.date}</b> — ${e.text}</div>`).join('');
+    // Number() aqui é guarda: tick não numérico vira NaN e o salto cai no frame 0,
+    // em vez de interpolar texto arbitrário do arquivo no atributo onclick.
+    `<div class="ev" onclick="jumpToTick(${Number(e.tick)})"><b>${e.date}</b> — ${e.text}</div>`).join('');
 }
 
 function play() {
@@ -158,8 +362,51 @@ $('file').onchange = e => {
   r.onload = () => load(JSON.parse(r.result));
   r.readAsText(e.target.files[0]);
 };
-fetch('frames.json').then(r => r.json()).then(load)
-  .catch(() => { $('feed').innerHTML = '<div class="ev">Não achei frames.json ao lado — use o seletor de arquivo acima (gere com: python -m mundo.cli --out viewer).</div>'; });
+// Carregar qualquer corrida: ?run=results/<corrida> busca
+// <corrida>/frames.json; sem o parâmetro, o frames.json ao lado.
+const runParam = new URLSearchParams(location.search).get('run');
+const runDir = (runParam && !runParam.includes('..'))
+  ? runParam.replace(/\/$/, '') : null;
+if (runDir) $('runlabel').textContent = 'corrida: ' + runDir;
+const framesUrl = runDir ? runDir + '/frames.json' : 'frames.json';
+// Segunda corrida para comparar: ?compare=results/<corrida> busca
+// <corrida>/frames.json e compara só o frame final. Mesma trava anti-'..'
+// do ?run; falha aqui não quebra o replay principal.
+const compareParam = new URLSearchParams(location.search).get('compare');
+const compareDir = (compareParam && !compareParam.includes('..'))
+  ? compareParam.replace(/\/$/, '') : null;
+fetch(framesUrl).then(r => r.json()).then(data => {
+  load(data);
+  if (compareDir) {
+    fetch(compareDir + '/frames.json').then(r => r.json())
+      .then(other => renderCompare(compareRuns(DATA.frames, other.frames), compareDir))
+      .catch(() => { $('compare').innerHTML = '<div class="ev">Não achei ' + compareDir + '/frames.json para comparar.</div>'; });
+  }
+}).catch(() => { $('feed').innerHTML = '<div class="ev">Não achei ' + framesUrl + ' — use o seletor de arquivo acima (gere com: python -m mundo.cli --out viewer).</div>'; });
+// Painel da forja: ?forge=results/forge-v1 busca os artefatos da corrida
+// da forja nesse diretório. Mesma trava anti-'..' do ?run/?compare, e
+// cadeia de fetch INDEPENDENTE do replay: falhar aqui não quebra o
+// replay, e o replay falhar não impede o painel.
+const forgeParam = new URLSearchParams(location.search).get('forge');
+const forgeDir = (forgeParam && !forgeParam.includes('..'))
+  ? forgeParam.replace(/\/$/, '') : null;
+if (forgeDir) {
+  const getJson = url => fetch(url).then(r => r.json()).catch(() => null);
+  const getText = url => fetch(url).then(r => (r.text ? r.text() : '')).catch(() => '');
+  Promise.all([
+    getJson(forgeDir + '/forge-v1.json'),
+    getJson(forgeDir + '/final_evaluation.json'),
+    getText(forgeDir + '/run_log.jsonl'),
+  ]).then(([fj, fe, logText]) => {
+    if (!fj && !fe) {
+      $('forgetitle').style.display = '';
+      $('forge').innerHTML = '<div class="ev">Não achei os artefatos da forja em '
+        + escForge(forgeDir) + '.</div>';
+      return;
+    }
+    renderForge(summarizeForge(fj, fe, parseRunLog(logText)), forgeDir);
+  }).catch(() => { /* painel é opcional: silêncio visual, replay intacto */ });
+}
 </script>
 </body>
 </html>
