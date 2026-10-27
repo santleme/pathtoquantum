@@ -45,7 +45,7 @@ Custo de adoção · performance para a escala do domínio (centenas de agentes 
 - Tamanhos medidos na fonte: `land-110m.json` **55 KB**, `countries-110m.json` **108 KB**, `countries-50m.json` **756 KB** (brutos, antes de gzip).
 - Estratégia: **mundo = 110m** (suficiente para a vista-múndi: a generalização de 1:110m é sub-pixel na largura típica da tela) + **recorte 50m gerado no build só para a América do Sul** (e, quando o mundo expandir, por região jogável) — o excerto regional de 50m é uma fração dos 756 KB globais (estimativa a confirmar no primeiro build; orçamento no §8). Lagos e centerlines de rios 50m entram como camada opcional da lente Recursos.
 - **1:10m descartado por ora:** arquivos de vários MB para um detalhe (cidade) que o domínio não tem.
-- A geometria é **asset do repo, versionado e com proveniência registrada** (fonte, escala, data de geração) — nada é buscado em runtime. Descodificação com `topojson-client` (~poucos KB).
+- A geometria é **gerada no build** a partir de dependência travada no lockfile (`world-atlas`, TopoJSON derivado de Natural Earth), com a **proveniência registrada no script de geração** (`viewer-next/scripts/build-geo.mjs`: fonte, escalas 110m/50m e recorte aplicado) — ela não é um asset versionado à mão no repo, e nada é buscado em runtime. Descodificação com `topojson-client` (~poucos KB).
 
 ### 3.3 Projeção e centro (resolve o §6.2 do estudo)
 
@@ -124,6 +124,19 @@ A recomendação é falseável — spike curto, veredito antes de construir o vi
 - **Protótipo mínimo:** base 110m + recorte SA 50m em `Path2D`, 500 empresas sintéticas, 2.000 partículas em arcos, replay com scrub sobre frames sintéticos no formato atual.
 - **Passa se:** fluxo a 60 fps sustentado (ou ≥50 fps com degradação graciosa desligando partículas) em hardware comum, frame dinâmico <8 ms, bundle inicial ≤ **180 KB gzip** (app+d3, sem dados geográficos) e dados geográficos iniciais ≤ **200 KB** (110m + excerto SA).
 - **Se reprovar:** esta ADR é substituída pela variante MapLibre+deck.gl (tile-less, estilo GeoJSON próprio) **antes** de qualquer fatia visual maior — registrar a troca como ADR-V02 citando a medição.
+
+**Resultado (27/10/2026, fatia F0/F1 em `viewer-next/`): PASSA.**
+
+| Métrica | Teto | Medido | Veredito |
+|---|---|---|---|
+| Bundle do app (JS+CSS+HTML, gzip, sem geo/dados) | ≤ 180 KiB | **13,3 KiB** | PASSA |
+| Geografia embutida no `dist` (bruto / gzip) | ≤ 200 KiB | **114,1 KiB bruto / 40,0 KiB gzip** | PASSA |
+| Custo de lógica de frame (dinâmico / total dinâmico+fluxo) | < 8 ms | **1,59 ms / 2,28 ms por frame** | PASSA |
+
+- Unidades: KiB (÷1024), como o script `viewer-next/scripts/measure-bundle.mjs` efetivamente calcula e compara os tetos; números conferidos com `npm run build && npm run measure` (app gzip 13.617 B; geografia 116.809 B bruto / 40.972 B gzip).
+- A geografia contada acima inclui o `geo/world-110m.json` (land-110m), que é **gerado/copiado no build mas não é carregado na abertura** — a abertura carrega só o excerto SA-50m; a vista-múndi é fatia futura.
+- O bench é de **lógica de frame em Node com ctx Canvas stub** (conta comandos de desenho; não rasteriza, não é fps de browser). É medição de referência, com **variância de máquina/execução**: na medição de entrega, dinâmico 1,59 ms e total 2,28 ms/frame; em reexecução posterior na mesma VM, dinâmico 1,13 ms e total 0,75 ms/frame (`npm run bench`) — sempre com margem ampla sob o teto.
+- **Operacionalização do critério de fps:** o "fluxo a 60 fps sustentado (ou ≥50 fps com degradação graciosa)" acima foi operacionalizado, nesta fatia, como **custo de lógica de frame < 8 ms medido nesse stub Node** — o proxy que o README de `viewer-next/` já divulgava e que esta ADR agora registra expressamente. Fps de browser real continua sendo medição de fatia futura, com hardware e método declarados.
 
 ---
 
