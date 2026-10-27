@@ -1,12 +1,25 @@
+![Path to Quantum — complexo industrial isométrico: refinaria, fab de semicondutores, data center e o CRYO-Q Lab com o núcleo quântico ao centro](assets/cover.webp)
+
 # Path to Quantum
 
 > **Eight autonomous AI companies. One real Earth. A race from raw ore to the quantum computer — and you are its god.**
 
+![Python ≥3.11](https://img.shields.io/badge/python-%E2%89%A53.11-blue) ![Suíte: 259 passed / 18 skipped — medida em 27/10/2026 nesta base](https://img.shields.io/badge/tests-259%20passed%20%2F%2018%20skipped%20(2026--10--27)-brightgreen) ![Corridas: Kaggle](https://img.shields.io/badge/runs-Kaggle-20BEFF) ![Era 1: implementada](https://img.shields.io/badge/Era%201%20Supercomputer-implementada-success) ![Era 2: declarada](https://img.shields.io/badge/Era%202%20Quantum-declarada-lightgrey)
+
 A Terra de verdade, simulada em grade lat/lon com depósitos e cidades reais, habitada por empresas de IA que sondam, mineram, refinam, fabricam, fazem marketing, falem e compram umas às outras. Você não joga como nenhuma delas: **você constrói o mundo, solta as empresas e assiste à história emergir** — na crônica datada que o mundo escreve sozinho.
 
-A corrida tem duas eras: **Path to the Supercomputer** (implementada) e **Path to Quantum** (o destino). Nenhuma empresa recebe ordens suas. Cada uma tem caixa, sede, personalidade — e a ambição de fechar a cadeia de produção inteira sozinha.
+A corrida tem duas eras: **Path to the Supercomputer** (implementada) e **Path to Quantum** (o destino). Nenhuma empresa recebe ordens suas. Cada uma tem caixa, sede, personalidade — e a ambição de fechar a cadeia de produção inteira sozinha. Por baixo, um motor **determinístico** com goldens bit-idênticos, um **núcleo nativo C++** com paridade provada, uma **guarda de informação** que torna o fog-of-war impossível de furar por tipo — e uma **forja** onde LLMs evoluem políticas-código contra esse mundo. Este README é a vitrine; a arquitetura vigente, sem rodeio, é [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 
 ---
+
+## 👀 Assista
+
+Rode o quickstart abaixo (2 comandos) e abra **`viewer/index.html`** no navegador: mapa da América do Sul com territórios, placar e a crônica da corrida gerada. O viewer é um arquivo único, sem dependências, e aceita qualquer corrida:
+
+- `viewer/index.html?run=results/<corrida>` — carrega os `frames/chronicle/scoreboard.json` daquela corrida; clicar num marco da crônica salta o replay àquele momento.
+- `viewer/index.html?forge=results/forge-v1` — o painel da forja: veredito da corrida evolutiva, campeão, avaliação cega e estatísticas do mutador.
+
+> O próximo sistema visual — mapa com contorno real da Terra, 5 lentes (Recursos · Produção · Comércio · Empresas · Crônica), fluxo desenhado e crônica tipografada — está desenhado no estudo de referência visual e entra pela frente do viewer-next (ADR-001), sobre **os mesmos JSONs**: o motor não muda.
 
 ## 📖 A primeira história (smoke real, seed 42, 24 meses)
 
@@ -28,7 +41,7 @@ Isto não é um pitch: é a crônica que o motor já escreveu numa corrida de 2 
 | 7 | Órbita Systems | Visionária | US$ 15,2M | 4 — dispositivos | 5 |
 | 8 | Nexo Indústrias | Oportunista | US$ 12,0M | 4 — dispositivos | 5 |
 
-E o detalhe que mantém o mundo aberto: **em 24 meses, ninguém montou um supercomputador.** Quatro empresas bateram no elo 4 — a Era 1 continua sem vencedor. É para isso que serve a corrida longa.
+E o detalhe que mantém o mundo aberto: **em 24 meses, ninguém montou um supercomputador.** Quatro empresas bateram no elo 4 — a Era 1 continua sem vencedor. É para isso que serve a corrida longa. E hoje o mundo já escreve mais do que nesta primeira história: a **crônica rica** detecta rivalidades (disputas por depósito, guerras de preço) e fecha cada era com uma retrospectiva narrada.
 
 ---
 
@@ -38,27 +51,32 @@ E o detalhe que mantém o mundo aberto: **em 24 meses, ninguém montou um superc
 flowchart LR
     GOD["👁️ Você, o Deus<br/>seed · nº de empresas · eventos"] --> ENGINE
     subgraph ENGINE["Motor determinístico — src/mundo/"]
-        WORLD["world.py<br/>Terra real: depósitos + cidades"]
+        WORLD["world.py + realdata.py<br/>Terra real: 13 depósitos + 11 cidades"]
         COMP["companies.py<br/>empresas e personalidades"]
         CHAIN["chain.py<br/>cadeia de produção e preços"]
-        TOOLS["tools_sim.py<br/>InstaSim · ZapSim"]
-        MARKET["Mercado<br/>preço por oferta/demanda<br/>+ ledger de conservação"]
+        TOOLS["tools_sim.py<br/>InstaSim · ZapSim · VidSim · LojaSim"]
+        OBS["observation.py + intentions.py<br/>guarda v2: Observation → Intentions"]
+        MARKET["Mercado vivo<br/>preço por oferta/demanda<br/>+ ledger de conservação"]
         WORLD --- COMP
         COMP --- CHAIN
         COMP --- TOOLS
+        COMP --- OBS
         COMP --- MARKET
     end
-    ENGINE --> CHRON["chronicle.py<br/>📖 a Crônica"]
+    ENGINE --> CHRON["chronicle.py + chronicle_rich.py<br/>📖 a Crônica + retrospectiva"]
     ENGINE --> FRAMES["frames.json + scoreboard.json"]
-    CHRON --> VIEWER["viewer/index.html<br/>mapa · placar · crônica"]
+    CHRON --> VIEWER["viewer/index.html<br/>mapa · placar · crônica · painel da forja"]
     FRAMES --> VIEWER
+    NAT["native_engine.py<br/>núcleo C++ opt-in, paridade 11/11"] -.-> ENGINE
+    TOR["tournament.py · forge/<br/>CMA-ES · evolução por LLM"] -.-> COMP
 ```
 
-- **O mundo** (`world.py`) — América do Sul em grade de 2,5°: 10 depósitos reais em coordenadas reais (Salar de Atacama, Salar de Uyuni, Salinas de Jujuy, Escondida, Chuquicamata, Toquepala, Carajás, Quadrilátero Ferrífero, Pré-sal e Vaca Muerta) e 8 cidades-mercado (São Paulo, Rio, Buenos Aires, Santiago, Lima, Bogotá, Belo Horizonte, Porto Alegre). Unidades reais: toneladas e US$. O subsolo é *fog of war* — teor e tamanho de um depósito só existem para quem pagou a sondagem.
-- **As empresas** (`companies.py`) — 8 arquétipos com traços de personalidade (agressividade, risco, obsessão por verticalizar, marketing) dirigindo políticas heurísticas. Nada de LLM por tick: o motor é **determinístico** — mesma seed, mesma história, ao dólar.
-- **O mercado** (`engine.py`) — a cada tick (1 tick = 1 mês), as empresas decidem, produzem, compram umas das outras e vendem às cidades; preços sobem e caem por oferta/demanda. Um ledger audita a conservação de massa e de dinheiro: nada aparece do nada.
-- **As ferramentas simuladas** (`tools_sim.py`) — as integrações do mundo real, simuladas com mecânica e custo reais: **InstaSim**, a rede social (campanha a CPM de US$ 9/mil impressões, faixa real de mercado, que infla a demanda da empresa por alguns meses) e **ZapSim**, a mensageria (US$ 0,05 por conversa, que eleva a conversão de vendas). A empresa que anuncia paga do próprio caixa — e a crônica registra.
-- **A crônica** (`chronicle.py`) — fundações, sondagens, marcos de cadeia, campanhas, falências e aquisições viram texto datado. A crônica é o show; o placar é o campeonato.
+- **O mundo** (`world.py` + `realdata.py`) — América do Sul em grade de 2,5° (30×22): **13 depósitos reais** em coordenadas reais (Salar de Atacama, Uyuni, Salinas de Jujuy, Escondida, Chuquicamata, Toquepala, Carajás, Quadrilátero Ferrífero, Pré-sal, Vaca Muerta, Salar del Hombre Muerto, Cerro Verde e El Mutún) e **11 cidades-mercado** (as 8 originais + Montevidéu, Assunção e Medellín), vindos de `data/world_data.json` com **fonte citada por item** (USGS e fontes públicas). O mundo embutido de 10 depósitos/8 cidades é o *fallback* v0, preservado bit-idêntico. Unidades reais: toneladas e US$. O subsolo é *fog of war* — teor e tamanho só existem para quem pagou a sondagem.
+- **As empresas** (`companies.py`) — 8 arquétipos com traços de personalidade (agressividade, risco, obsessão por verticalizar, marketing) dirigindo políticas plugáveis. Nada de LLM por tick: o motor é **determinístico** — mesma seed, mesma história, ao dólar.
+- **A guarda** (`observation.py` + `intentions.py`) — a política não recebe o motor: recebe uma **Observation** tipada e congelada (só o público + ela mesma) e devolve **Intentions** declarativas, validadas por inteiro antes de executar. Vazamento de informação virou impossibilidade de tipo, não questão de disciplina.
+- **O mercado** (`engine.py`) — a cada tick (1 tick = 1 mês), as empresas decidem, produzem, compram umas das outras e vendem às cidades; preços sobem e caem por oferta/demanda num mercado vivo parametrizado por dados reais. Um ledger audita a conservação de massa e de dinheiro: nada aparece do nada. Equipamentos desgastam e quebram; países têm política e comércio externo — tudo dado com fonte, em `data/`.
+- **As ferramentas simuladas** (`tools_sim.py`) — as integrações do mundo real, simuladas com mecânica e custo reais: **InstaSim** (rede social, CPM), **ZapSim** (mensageria, custo por conversa), **VidSim** (estúdio de vídeo: campanha que multiplica a demanda de dispositivos e supercomputadores) e **LojaSim** (marketplace: loja + comissão de 13%, como os reais). A empresa que anuncia paga do próprio caixa — e a crônica registra.
+- **A crônica** (`chronicle.py` + `chronicle_rich.py`) — fundações, sondagens, marcos de cadeia, campanhas, falências e aquisições viram texto datado; a camada rica deriva rivalidades e a retrospectiva de cada era. A crônica é o show; o placar é o campeonato.
 - **Deus** (`cli.py`) — você define seed, número de empresas e pode injetar eventos por arquivo JSON: choque de preço, descoberta, sanção.
 
 ### A cadeia de produção
@@ -88,14 +106,39 @@ Refino rende 0,6 t por tonelada bruta. Um componente consome 0,020 t de cobre + 
 
 ---
 
+## 📍 Estado real do projeto
+
+Nada aqui é promessa: cada linha diz o status **e onde o item vive** (medido nesta base em 27/10/2026).
+
+| Frente | Status | Onde vive |
+|---|---|---|
+| Motor determinístico + goldens bit-idênticos | ✅ Entregue | `src/mundo/engine.py` · suíte |
+| Mundo v1 — 13 depósitos / 11 cidades com dados reais | ✅ Entregue | `data/world_data.json` · `realdata.py` |
+| Ferramentas simuladas (InstaSim, ZapSim, VidSim, LojaSim) | ✅ Entregue | `tools_sim.py` |
+| Mundo vivo (mercado, equipamentos, países) | ✅ Entregue | `marketdata/equipdata/countrydata.py` · vereditos B1–B3 nos notebooks |
+| Núcleo nativo C++/nanobind | ✅ Paridade **11/11 bit-idêntica** aprovada (Fase 5) | `native_engine.py` + `src/mundo/native/` · `docs/DEGRAU1-LOG.md` |
+| Guarda v2 — Observation tipada + Intentions | ✅ Migração fechada | `observation.py` · `intentions.py` · `docs/OBSERVATION-SPEC.md` |
+| Torneio de políticas (genoma de 20 genes, CMA-ES em liga) | ✅ Construído e lançado no Kaggle | `genome.py` · `tournament.py` · `notebooks/torneio-v1.ipynb` |
+| Crônica rica (rivalidades + retrospectiva por era) | ✅ Entregue (#13) | `chronicle_rich.py` · testes |
+| Viewer (replay, `?run=`, comparador, painel da forja) | ✅ Nesta base | `viewer/index.html` |
+| Forja evolutiva — políticas-código por LLM (#6) | 🚧 Corrida v1 preparada; corridas V6–V8 na linha Kaggle | `forge/` · `program.py` · `docs/FORGE-LOG.md` · branches irmãs da forja |
+| Exportador Rerun de corridas (#20) | 🚧 Em branch própria | branch `frente/rerun-exporter` (não está nesta base) |
+| Viewer-next — sistema visual por lentes | 📐 Desenhado (estudo + ADR-001) | frente irmã do viewer; consome os mesmos JSONs |
+| Era 2 — elos até o computador quântico | 📐 Declarada | `DESIGN.md` · issue #17 (épica v3) |
+| Licença do projeto | ⚠️ **Em aberto** — não há `LICENSE` neste repo | decisão pendente do fundador; nenhum badge de licença é exibido até existir |
+
+**Suíte nesta base:** `259 passed, 18 skipped` — os 18 skips são os testes de paridade sem o núcleo nativo compilado. Reproduzir (não confie no número, rode): `.venv/bin/python -m pytest -q`.
+
+---
+
 ## 🚀 Quickstart
 
-Requer Python ≥ 3.11. Sem dependências em tempo de execução — só o `pytest` para os testes.
+Requer Python ≥ 3.11. O motor não tem dependências de runtime; os testes usam `pytest` e `numpy` (ambos no extra `dev`).
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
-.venv/bin/python -m pytest -q        # 9 testes estruturais
+.venv/bin/python -m pytest -q        # a suíte estrutural (determinismo, conservação, fog, cadeia, guarda, torneio, forja)
 .venv/bin/python -m mundo.cli --seed 42 --ticks 24 --out viewer
 ```
 
@@ -105,34 +148,57 @@ Para mexer no mundo: `--companies N` muda o número de empresas, `--seed N` muda
 
 ### A corrida de verdade roda no Kaggle
 
-A regra da casa: código e testes na máquina local; **a simulação longa (120 ticks = 10 anos) roda num notebook no Kaggle**, que imprime a crônica e o veredito e devolve os `frames.json` para o viewer.
+A regra da casa (ADR-006): código e testes na máquina local; **a simulação longa (120 ticks = 10 anos), o torneio completo e as corridas da forja rodam em notebooks no Kaggle**, que imprimem a crônica e o veredito no protocolo pré-registrado e devolvem os JSONs para o viewer. Os notebooks estão classificados em [`notebooks/README.md`](notebooks/README.md) — do nascimento (`kaggle_mundo_v0.ipynb`) aos vereditos do Degrau 1, ao torneio e à forja.
+
+Para empacotar e publicar um kernel:
 
 ```bash
 python3 scripts/kaggle_push_kernel.py --dry-run    # valida o payload, não envia nada
 python3 scripts/kaggle_push_kernel.py --bundle-src --usuario SEU_USUARIO_KAGGLE
 ```
 
-Isso empacota o fonte num dataset privado e publica o kernel `mundo-autonomo-nascimento-v0` (metadata em `notebooks/kernel-metadata.json`). Ao final da corrida, baixe `frames.json`/`chronicle.json`/`scoreboard.json` dos outputs para `viewer/` e abra o `index.html` para assistir aos 10 anos.
+Ao final da corrida, baixe `frames.json`/`chronicle.json`/`scoreboard.json` dos outputs para `results/<corrida>/` e abra o viewer com `?run=results/<corrida>` para assistir.
 
 ---
+
+## 🏛️ Arquitetura em 1 tela
+
+Cinco invariantes seguram o sistema inteiro (detalhe em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md)):
+
+1. **Determinismo** — mesma seed, mesma história, ao dólar; goldens bit-idênticos na suíte.
+2. **Fog-of-war por tipo** — a política só enxerga a `Observation`; o resto é inacessível por construção.
+3. **Conservação auditável** — ledger de massa e dinheiro em todo tick.
+4. **Nenhum LLM no tick** — LLMs evoluem políticas *offline*, na forja; a corrida é código determinístico.
+5. **Viewer burro** — o viewer só lê 3 JSONs; trocar a interface nunca toca o motor.
 
 ## 🗺️ Roadmap
 
-- **A corrida de nascimento publicada** — os frames dos 10 anos no viewer, com a crônica completa e o primeiro vencedor (ou a primeira falência em cadeia).
-- **O planeta inteiro** — novas regiões, depósitos e cidades; novas commodities e cadeias (baterias, semicondutores, energia).
-- **Era 2: os elos do quântico** — a cadeia continua: supercomputador → … → computador quântico.
-- **Empresas mais vivas** — agentes LLM e políticas de RL sobre este motor determinístico, sem perder a reprodutibilidade.
-- **Mais ferramentas simuladas** — estúdio de vídeo, nuvem, logística: o ecossistema de serviços que as empresas usam (e pagam) para operar.
-- **Economia financeira** — bancos, juros, ações e fusões além da aquisição por falência.
+Do plano de versões do PRD (§10), com o já-entregue marcado — não prometido de novo:
+
+- ✅ **v0 Nascimento** — motor, mundo embutido, crônica, viewer, primeira história.
+- ✅ **v1 Mundo maior e vivo** — mundo real 13/11, mercado vivo, equipamentos, países, VidSim/LojaSim, crônica rica, replay completo no viewer.
+- 🚧 **v2 Temporadas de políticas** — torneio CMA-ES lançado; forja evolutiva em corrida (#6); políticas aprendidas disputando temporadas.
+- 📐 **v3 Outros deuses e Era 2** — editor de mundos, ligas entre mundos e os elos finais até o computador quântico (épica #17).
 
 ## O que isto ainda não é (honesto)
 
-- Não é o mundo inteiro: só América do Sul, 10 depósitos, 8 empresas.
-- As empresas decidem por heurísticas com personalidade — agentes LLM e RL entram depois, sobre este motor.
-- A cadeia vai até o supercomputador; o computador quântico é a cadeia-emblema declarada no design, ainda sem os elos finais.
-- Sem multiplayer, sem economia monetária/financeira (juros, ações, bancos) e sem política/governos além dos eventos de Deus.
+- Não é o mundo inteiro: só América do Sul (13 depósitos, 11 cidades, 8 empresas por corrida).
+- A cadeia vai até o supercomputador; o computador quântico é a cadeia-emblema declarada, ainda sem os elos finais.
+- As empresas decidem por heurísticas, genomas evoluídos e programas da forja — RL/MARL está desenhado e fora da fila, não implementado.
+- Sem multiplayer, sem economia financeira (juros, ações, bancos) e sem política/governos além dos eventos de Deus e dos parâmetros de país.
 
 ---
+
+## 📚 Documentação
+
+| Doc | O que é |
+|---|---|
+| [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) | **A arquitetura vigente** — componentes, invariantes e todos os módulos. |
+| [`DESIGN.md`](DESIGN.md) | A visão e as regras do mundo, na voz do fundador. |
+| [`docs/README.md`](docs/README.md) | Índice de todos os documentos, com tipo e status (vigente/histórico/log/estudo). |
+| [`docs/adr/`](docs/adr/README.md) | As decisões que ainda mandam, em ADRs curtos. |
+| [`docs/PRD.md`](docs/PRD.md) · [`docs/SDD.md`](docs/SDD.md) | Produto e desenho originais (v1.0/v0, históricos com adendo). |
+| [`notebooks/README.md`](notebooks/README.md) | Os notebooks Kaggle, classificados (canônico/veredito/diagnóstico). |
 
 ## Por quê
 
@@ -149,10 +215,21 @@ Se dinheiro não existisse, é isto que ele construiria. Então é isto.
 ## Estrutura do repo
 
 ```
-src/mundo/      motor: world · chain · companies · engine · tools_sim · chronicle · cli
-viewer/         player web (arquivo único) + frames/chronicle/scoreboard da última corrida
-notebooks/      a corrida de nascimento no Kaggle
-scripts/        push do kernel para o Kaggle
-tests/          9 testes estruturais (determinismo, conservação, fog of war, cadeia, ferramentas)
+src/mundo/      motor (23 módulos): engine · native_engine+native/ · world/realdata ·
+                chain · companies · policies/genome/program · observation/intentions ·
+                tournament/driver · tools_sim · chronicle/chronicle_rich · cli
+forge/          a forja evolutiva: mutador LLM · avaliador em cascata · avaliação cega · veredito
+viewer/         player web (arquivo único) + JSONs da corrida exibida
+data/           mundo real e parâmetros vivos — dado com fonte citada por item
+docs/           ARQUITETURA (vigente) · índice · ADRs · PRD/SDD (históricos) · estudos e logs
+notebooks/      os experimentos Kaggle, classificados em notebooks/README.md
+experiments/    degrau1: artefatos e README do núcleo nativo
+scripts/        push de kernels/datasets para o Kaggle
+tests/          a suíte estrutural (19 arquivos)
+assets/         artes finais do projeto (cover.webp)
 DESIGN.md       a visão e as regras do mundo, sem rodeio
 ```
+
+## Licença
+
+⚠️ **Ainda não definida.** Este repositório não contém um arquivo `LICENSE` — a escolha da licença é uma decisão pendente do fundador e está registrada como item em aberto na tabela de estado. Até lá, nenhum badge ou afirmação de licença se aplica.
