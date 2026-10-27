@@ -196,7 +196,7 @@ def test_bankruptcy_with_probable_cause():
     assert dead, "a política suicida precisa quebrar alguém"
     ev = dead[0]
     assert ev["data"]["cause"] == "capex"
-    assert "Causa provável" in ev["text"] and "capex" not in ev["text"]
+    assert "Causa provável: expandiu rápido demais" in ev["text"]
 
 
 def test_era_summary_every_60_ticks():
