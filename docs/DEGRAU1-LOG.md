@@ -489,3 +489,62 @@ seeds 42/7/11/23, 120 ticks.
   CONGELADAS** — a Fase 5 (núcleo nativo Rust/PyO3) está liberada.
 - Outputs em `results/veredito-b3/` (`veredito-b3.json` +
   `stdout.txt`; só disco).
+
+## Fase 5 — núcleo nativo C++/nanobind (26/10/2026)
+
+- **ROTA: C++/nanobind** (não Rust/PyO3). A VM não tem
+  cargo/rustc/maturin; instalar a toolchain Rust seria peso e risco de
+  versão contra o Python 3.12, e a rota C++/nanobind é a PROVADA no
+  spike do Portão 0 nesta mesma VM (43,8× a n=100, 45,8× a n=1.000) —
+  o design a nomeia alternativa equivalente. Compilação:
+  `g++ -O2 -ffp-contract=off -fno-fast-math`, sem `-march=native`
+  (build em `src/mundo/native/build.py`, sob demanda; o .so não é
+  versionado).
+- **Arquitetura híbrida:** o núcleo (`src/mundo/native/core.cpp`,
+  ~2.950 linhas + `mt19937.hpp`) detém TODO o estado numérico e o
+  `step()` completo — política heurística, produção, mercado clássico
+  + B1, B3/B4a (política, paridades, comércio externo), B2
+  (desgaste/quebra/reparo/PM/overhaul), falência/aquisição,
+  rivalidade, resumos de era — e emite registros de evento
+  estruturados. A camada Python (`src/mundo/native_engine.py`,
+  `NativeEngine` com a MESMA assinatura do `Engine`) formata a
+  Crônica com os templates do motor de referência e monta
+  frames/`result()`/`state_dict()`. Opt-in total: o caminho Python
+  puro não muda um bit; política customizada é recusada com
+  ValueError (o backend cobre a HeuristicPolicy, a política oficial).
+- **PARIDADE — O PORTÃO: BIT-IDÊNTICA, sem tolerância.** Hash
+  SHA-256 do `state_dict()` (protocolo dos goldens) E do `result()`
+  iguais aos do Python em: clássico n=8 (24 e 120 ticks — inclusive o
+  golden `e01923e1…` da Fase 1 reproduzido pelo nativo), n=100, mundo
+  builtin, eventos de Deus; mundo vivo completo n=8 (48/120 ticks) e
+  n=100 (48), seeds 42/7/123; flags isoladas e em pares;
+  `force_events` políticos (os 7 tipos de evento); restore cruzado
+  py→nat, nat→py e nat→nat (30 + restore + 30 == contínua de 60) no
+  clássico e no vivo. Ingredientes: MT19937 réplica do CPython —
+  incluído o detalhe de que o `lognormvariate` do 3.12 usa
+  `normalvariate` (Kinderman–Monahan), NÃO `gauss`; Neumaier onde o
+  motor usa `sum()`; `rint` no `round()` dos ticks de reparo; ordem
+  de iteração dos dicts do Python replicada nas estruturas que
+  afetam RNG, somas e eventos. Detalhe de serialização: campos
+  inteiros da fonte Python (ex.: `size_t` int do mundo builtin)
+  voltam como int no `state_dict` — tipos preservados pela camada
+  Python, ou o hash mudaria sem a simulação mudar.
+- **Suíte: 192/192** (178 anteriores + 14 novos em
+  `tests/test_native_parity.py`, que pulam sem toolchain C++).
+  Goldens da Fase 1 intactos no caminho Python.
+- **Benchmark (esta VM, mundo vivo ligado, `step()` cronometrado,
+  mediana):** n=100 — Python 161,9 ticks/s × nativo 1.955,5
+  ticks/s = **12,1×**; n=1.000 — 13,6 × 254,8 ticks/s = **18,7×**.
+  Abaixo do spike do Portão 0 (43,8×/45,8×) porque o spike media só
+  `_produce`+`_market` do mundo CLÁSSICO; aqui é o `step()` inteiro
+  do mundo vivo, com política, política de país e a travessia dos
+  registros de evento pela fronteira nanobind a cada tick. A medição
+  em escala (Kaggle, 4 vCPU) é do notebook de veredito.
+- **Notebook `notebooks/veredito-fase5.ipynb` PREPARADO** com
+  protocolo pré-registrado (paridade em escala — até n=1.000 — +
+  benchmark no Kaggle; o kernel compila o núcleo das fontes do
+  bundle). **NÃO lançado** — o lançamento é do agente principal,
+  como nos vereditos anteriores.
+- **Pendências declaradas:** políticas plugáveis arbitrárias seguem
+  só no motor Python (por desenho — o torneio/forja usam o Engine de
+  referência); Fase 6 (JAX) continua condicional a gargalo medido.
