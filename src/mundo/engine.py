@@ -15,6 +15,8 @@ from dataclasses import asdict
 from . import chain, countrydata, equipdata, marketdata
 from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, StockBook, make_companies
+from .observation import (CompanyView, DepositView, Observation,
+                          build_company_view, build_observation)
 from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
                         LOJA_DURATION_TICKS, LOJA_FEE_PCT, VID_DEMAND_WEIGHT,
                         VID_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
@@ -31,16 +33,17 @@ _REGIME_DUR_KEY = {"boom": "boom_months", "bust": "bust_months",
 class Policy:
     """Interface plugável de decisão das empresas.
 
-    O motor chama ``decide(engine, comp)`` uma vez por tick para cada
-    empresa viva, já com ``comp._offers``/``comp._buys`` zerados. A
-    política lê o mundo pelo ``engine`` (preços, depósitos, claims,
-    crônica) e age pelos métodos do motor (``engine._spend``,
-    ``engine._note_link``): o motor continua dono do estado e das regras
-    físicas/econômicas. Políticas aprendidas (RL) implementam esta
-    interface sem tocar o motor.
+    O motor chama ``decide(obs)`` uma vez por tick para cada empresa
+    viva, já com as intenções do tick anterior zeradas — e entrega
+    uma ``Observation`` (mundo.observation, guarda v2): a empresa
+    mesma como view só-leitura, o mundo público, os verbos de ação
+    e a fachada de sorteio. Política nenhuma recebe o ``Engine`` nem
+    ``Company`` crua: fog-of-war é tipo, não disciplina (SDD §6.2,
+    docs/OBSERVATION-SPEC.md). Políticas aprendidas (RL) implementam
+    esta interface sem tocar o motor.
     """
 
-    def decide(self, engine, comp: Company) -> None:
+    def decide(self, obs: Observation) -> None:
         raise NotImplementedError
 
 
@@ -92,83 +95,83 @@ class HeuristicPolicy(Policy):
                 raise ValueError(f"genes desconhecidos: {sorted(unknown)}")
             self.p.update(params)
 
-    def reserve(self, comp: Company) -> float:
+    def reserve(self, me: CompanyView) -> float:
         return self.p["reserve_base"] \
-            + (1.0 - comp.traits["risk"]) * self.p["reserve_risk_span"]
+            + (1.0 - me.traits["risk"]) * self.p["reserve_risk_span"]
 
-    def decide(self, engine, comp: Company) -> None:
-        rng = engine.rng
-        t = comp.traits
-        spendable = comp.cash - self.reserve(comp)
+    def decide(self, obs: Observation) -> None:
+        me, world, act = obs.me, obs.world, obs.act
+        t = me.traits
+        spendable = me.cash - self.reserve(me)
         capex_done = False
 
         # 0) Equipamentos (B2): reparar / manter / trocar a frota —
         #    só existe com equip_v2 ligado; desligado, nem um bit muda
-        if engine.equip_v2:
-            self.maintain_equipment(engine, comp)
+        if world.equip_v2:
+            self.maintain_equipment(obs)
 
         # 1) Mineração: sondar / reivindicar / construir mina
-        mines = [f for f in comp.facilities.values() if f["kind"] == "mine"]
+        mines = [f for f in me.facilities if f.kind == "mine"]
         desired_mines = 1 + int(t["aggression"] * self.p["mines_coef"])
         if len(mines) < desired_mines:
-            target = self.pick_deposit(engine, comp)
+            target = self.pick_deposit(obs)
             if target is not None:
-                known = comp.knowledge.get(target.name)
+                known = me.knowledge.get(target.name)
                 if known is None:
                     if spendable > chain.PROBE_COST:
-                        engine._spend(comp, chain.PROBE_COST, reason="probe")
-                        comp.knowledge[target.name] = (target.grade, target.size_t)
-                        if target.grade >= 0.78:
-                            engine.chronicle.add(engine.tick, "probe",
-                                               f"{comp.name} sonda {target.name} e "
-                                               f"encontra um depósito RICO.", comp.name)
-                        elif target.grade <= 0.35:
-                            engine.chronicle.add(engine.tick, "probe",
-                                               f"{comp.name} sonda {target.name}: "
-                                               f"teor decepcionante.", comp.name)
+                        # a sondagem é o verbo que revela: gasto,
+                        # registro no knowledge e o par (grade, size)
+                        grade, _size = act.probe(target.name)
+                        if grade >= 0.78:
+                            act.narrate("probe",
+                                        f"{me.name} sonda {target.name} e "
+                                        f"encontra um depósito RICO.")
+                        elif grade <= 0.35:
+                            act.narrate("probe",
+                                        f"{me.name} sonda {target.name}: "
+                                        f"teor decepcionante.")
                 elif not capex_done:
                     grade, _ = known
                     threshold = self.p["grade_thr_base"] \
                         - t["risk"] * self.p["grade_thr_risk"]
                     # B3: capex no país paga o prêmio de risco-país
                     # (1,0 com country_v2 desligado — bit-idêntico)
-                    mult = engine.capex_mult(engine.deposit_country(target))
+                    mult = world.capex_mult(target.country)
                     cost = (chain.CLAIM_COST
                             + chain.FACILITIES["mine"]["cost"]) * mult
                     if grade >= threshold and spendable > cost:
-                        if target.cell not in comp.claimed:
-                            engine._spend(comp, chain.CLAIM_COST * mult,
-                                          reason="claim")
-                            comp.claimed.add(target.cell)
-                            engine.claimed_by[target.cell] = comp.cid
-                        engine._spend(comp,
-                                      chain.FACILITIES["mine"]["cost"] * mult,
-                                      reason="build")
-                        fac = comp.add_facility("mine", target.cell)
-                        fac["deposit"] = target.name
-                        engine.chronicle.add(engine.tick, "mine",
-                                           f"{comp.name} abre sua mina em "
-                                           f"{target.name}.", comp.name,
-                                           cid=comp.cid, fid=fac["id"],
-                                           facility_kind="mine", cell=list(target.cell),
-                                           deposit=target.name)
-                        engine._note_link(comp, 1)
+                        if target.cell not in me.claimed:
+                            act.spend(chain.CLAIM_COST * mult,
+                                      reason="claim")
+                            act.register_claim(target.cell)
+                        act.spend(chain.FACILITIES["mine"]["cost"] * mult,
+                                  reason="build")
+                        fac = act.build_facility("mine", target.cell,
+                                                 deposit=target.name)
+                        act.narrate("mine",
+                                    f"{me.name} abre sua mina em "
+                                    f"{target.name}.",
+                                    cid=me.cid, fid=fac.id,
+                                    facility_kind="mine",
+                                    cell=list(target.cell),
+                                    deposit=target.name)
+                        act.note_link(1)
                         capex_done = True
 
         # 2) Elos de jusante
         if not capex_done:
-            capex_done = self.build_downstream(engine, comp, spendable)
+            capex_done = self.build_downstream(obs, spendable)
 
         # 3) Compras de insumos que faltam
-        self.plan_buys(engine, comp)
+        self.plan_buys(obs)
 
         # 4) Ofertas de venda (excedente sobre o buffer de jusante)
-        self.plan_sells(engine, comp)
+        self.plan_sells(obs)
 
         # 5) Ferramentas simuladas
-        self.use_tools(engine, comp)
+        self.use_tools(obs)
 
-    def maintain_equipment(self, engine, comp: Company) -> None:
+    def maintain_equipment(self, obs: Observation) -> None:
         """Os três verbos do B2 — reparar, manter, trocar (overhaul).
 
         A propensão a cuidar da frota nasce dos traços: quem tem
@@ -177,194 +180,200 @@ class HeuristicPolicy(Policy):
         planta velha antes do colapso. Limiares e multiplicadores são
         DADO (equipdata, seção "policy"); custos e física, do motor.
         Instalação quebrada/em oficina não recebe PM nem overhaul."""
-        pol = engine._equip["policy"]
-        model = engine._equip["model"]
-        care = 1.0 - comp.traits["aggression"]
-        reserve = self.reserve(comp)
+        me, world, act = obs.me, obs.world, obs.act
+        pol = world.equip_policy
+        model = world.equip_model
+        care = 1.0 - me.traits["aggression"]
+        reserve = self.reserve(me)
         maint_thr = pol["maint_h_base"] + care * pol["maint_h_care_span"]
         repair_mult = pol["repair_mult_care0"] + care * (
             pol["repair_mult_care1"] - pol["repair_mult_care0"])
-        for fac in list(comp.facilities.values()):
-            eq = engine._fac_equip(fac)
-            build = chain.FACILITIES[fac["kind"]]["cost"]
-            if eq["broken"]:
-                if comp.cash - reserve > eq["repair_cost"] * repair_mult:
-                    engine.repair_facility(comp, fac)
+        for fac in me.facilities:
+            eq = fac.equip
+            build = chain.FACILITIES[fac.kind]["cost"]
+            if eq.broken:
+                if me.cash - reserve > eq.repair_cost * repair_mult:
+                    act.repair(fac.id)
                 continue
-            if engine.tick <= eq["down_until"]:
+            if world.tick <= eq.down_until:
                 continue        # em oficina: nada a decidir neste tick
-            if eq["age"] >= pol["overhaul_min_age"] \
-                    and eq["cond"] <= pol["overhaul_max_cond"]:
-                if comp.cash - reserve > build * model["overhaul_frac"]:
-                    engine.overhaul_facility(comp, fac)
+            if eq.age >= pol["overhaul_min_age"] \
+                    and eq.cond <= pol["overhaul_max_cond"]:
+                if me.cash - reserve > build * model["overhaul_frac"]:
+                    act.overhaul(fac.id)
                 continue
-            if eq["cond"] < maint_thr \
-                    and comp.cash - reserve > build * model["maint_frac"]:
-                engine.maintain_facility(comp, fac)
+            if eq.cond < maint_thr \
+                    and me.cash - reserve > build * model["maint_frac"]:
+                act.maintain(fac.id)
 
-    def pick_deposit(self, engine, comp: Company) -> Deposit | None:
-        hq = engine._city_by_name[comp.hq_city]
-        mined = {f.get("deposit") for f in comp.facilities.values()}
+    def pick_deposit(self, obs: Observation) -> DepositView | None:
+        me, world = obs.me, obs.world
+        hq = me.hq
+        mined = {f.deposit for f in me.facilities}
         best, best_score = None, -1.0
-        for d in engine.deposits:
-            owner = engine.claimed_by.get(d.cell)
-            if owner is not None and owner != comp.cid:
+        for d in world.deposits:
+            owner = d.claimed_by
+            if owner is not None and owner != me.cid:
                 continue
             if d.name in mined:
                 continue
             dist = abs(d.lat - hq.lat) + abs(d.lon - hq.lon)
             score = chain.BASE_PRICES[d.resource] \
                 / (1.0 + dist / self.p["dist_scale"])
-            known = comp.knowledge.get(d.name)
+            known = me.knowledge.get(d.name)
             if known:
                 score *= self.p["known_grade_base"] + known[0]  # teor pesa
                 score *= min(1.5, known[1] / self.p["size_ref"])
             noise = self.p["pick_noise"]
-            score *= engine.rng.uniform(1.0 - noise, 1.0 + noise)  # gosto/erro
+            score *= obs.rng.uniform(1.0 - noise, 1.0 + noise)  # gosto/erro
             if score > best_score:
                 best, best_score = d, score
         return best
 
-    def build_downstream(self, engine, comp: Company, spendable: float) -> bool:
-        t = comp.traits
-        hq_cell = engine._city_by_name[comp.hq_city].cell
+    def build_downstream(self, obs: Observation, spendable: float) -> bool:
+        me, world, act = obs.me, obs.world, obs.act
+        t = me.traits
+        hq_cell = me.hq.cell
         # B3: jusante é construído no país da sede — mesmo prêmio de
         # capex das minas (1,0 desligado — bit-idêntico)
-        mult = engine.capex_mult(engine.city_country(comp.hq_city))
+        mult = world.capex_mult(me.hq.country)
 
         def affordable(kind):
             return spendable > chain.FACILITIES[kind]["cost"] * mult
 
         def build(kind, text):
-            engine._spend(comp, chain.FACILITIES[kind]["cost"] * mult,
-                          reason="build")
-            fac = comp.add_facility(kind, hq_cell)
-            engine.chronicle.add(engine.tick, "facility", text, comp.name,
-                                 cid=comp.cid, fid=fac["id"], facility_kind=kind,
-                                 cell=list(hq_cell))
-            engine._note_link(comp, comp.chain_stage())
+            act.spend(chain.FACILITIES[kind]["cost"] * mult,
+                      reason="build")
+            fac = act.build_facility(kind, hq_cell)
+            act.narrate("facility", text,
+                        cid=me.cid, fid=fac.id, facility_kind=kind,
+                        cell=list(hq_cell))
+            act.note_link(me.chain_stage())
             return True
 
-        raw_total = sum(comp.stocks[r] for r in chain.RAW_TO_REFINED)
-        if comp.has("mine") and not comp.has("refinery") \
+        raw_total = sum(me.stocks[r] for r in chain.RAW_TO_REFINED)
+        if me.has("mine") and not me.has("refinery") \
                 and raw_total > self.p["refinery_raw_trigger"] \
                 and affordable("refinery"):
             return build("refinery",
-                         f"{comp.name} inaugura sua refinaria em {comp.hq_city} — "
+                         f"{me.name} inaugura sua refinaria em {me.hq_city} — "
                          f"o refino agora é dentro de casa.")
-        metal_value = sum(comp.stocks[m] * chain.BASE_PRICES[m]
+        metal_value = sum(me.stocks[m] * chain.BASE_PRICES[m]
                           for m in ("copper", "lithium", "iron"))
         need = self.p["factory_need_vertical"] if t["vertical"] > 0.7 \
             else self.p["factory_need_default"]
-        if comp.has("refinery") and not comp.has("factory") \
+        if me.has("refinery") and not me.has("factory") \
                 and metal_value > need and affordable("factory"):
             return build("factory",
-                         f"{comp.name} ergue uma fábrica de componentes em "
-                         f"{comp.hq_city}.")
-        if comp.has("factory") and not comp.has("plant") \
-                and comp.stocks["component"] > self.p["plant_component_trigger"] \
+                         f"{me.name} ergue uma fábrica de componentes em "
+                         f"{me.hq_city}.")
+        if me.has("factory") and not me.has("plant") \
+                and me.stocks["component"] > self.p["plant_component_trigger"] \
                 and affordable("plant"):
             return build("plant",
-                         f"{comp.name} abre sua planta de dispositivos — "
+                         f"{me.name} abre sua planta de dispositivos — "
                          f"a cadeia sobe mais um elo.")
-        if comp.has("plant") and not comp.has("assembly") \
-                and comp.stocks["device"] > self.p["assembly_device_trigger"] \
-                and comp.cash > chain.FACILITIES["assembly"]["cost"] \
+        if me.has("plant") and not me.has("assembly") \
+                and me.stocks["device"] > self.p["assembly_device_trigger"] \
+                and me.cash > chain.FACILITIES["assembly"]["cost"] \
                 + self.p["assembly_cash_cushion"]:
             return build("assembly",
-                         f"{comp.name} anuncia a montadora de SUPERCOMPUTADORES. "
+                         f"{me.name} anuncia a montadora de SUPERCOMPUTADORES. "
                          f"O topo da cadeia está ao alcance.")
         return False
 
-    def plan_buys(self, engine, comp: Company) -> None:
-        spendable = comp.cash - self.reserve(comp)
+    def plan_buys(self, obs: Observation) -> None:
+        me, world, act = obs.me, obs.world, obs.act
+        spendable = me.cash - self.reserve(me)
         if spendable <= 0:
             return
         scale = self.p["buy_target_scale"]
         wants = {}
-        if comp.has("factory"):
-            if comp.stocks["copper"] < 4.0:
+        if me.has("factory"):
+            if me.stocks["copper"] < 4.0:
                 wants["copper"] = 6.0 * scale
-            if comp.stocks["lithium"] < 1.5:
+            if me.stocks["lithium"] < 1.5:
                 wants["lithium"] = 2.5 * scale
-        if comp.has("plant") and comp.stocks["component"] < 12:
+        if me.has("plant") and me.stocks["component"] < 12:
             wants["component"] = 20.0 * scale
-        if comp.has("assembly") and comp.stocks["device"] < 10:
+        if me.has("assembly") and me.stocks["device"] < 10:
             wants["device"] = 12.0 * scale
         budget = spendable * self.p["buy_budget_frac"]
         for c, q in wants.items():
-            cost = q * engine.prices[c]
+            cost = q * world.prices[c]
             if cost <= budget:
-                comp._buys[c] = q
+                act.buy(c, q)
                 budget -= cost
 
-    def buffer(self, comp: Company, commodity: str) -> float:
+    def buffer(self, me: CompanyView, commodity: str) -> float:
         """Quanto manter em estoque para o próprio jusante."""
-        v = (0.5 + comp.traits["vertical"]) * self.p["buffer_scale"]
-        if commodity in chain.RAW_TO_REFINED and comp.has("refinery"):
+        v = (0.5 + me.traits["vertical"]) * self.p["buffer_scale"]
+        if commodity in chain.RAW_TO_REFINED and me.has("refinery"):
             return 220.0 * v
-        if commodity in ("copper", "lithium") and comp.has("factory"):
+        if commodity in ("copper", "lithium") and me.has("factory"):
             return (6.0 if commodity == "copper" else 2.0) * v
-        if commodity == "component" and comp.has("plant"):
+        if commodity == "component" and me.has("plant"):
             return 30.0 * v
-        if commodity == "device" and comp.has("assembly"):
+        if commodity == "device" and me.has("assembly"):
             return 15.0 * v
         return 0.0
 
-    def plan_sells(self, engine, comp: Company) -> None:
+    def plan_sells(self, obs: Observation) -> None:
+        me, act = obs.me, obs.act
         for c in chain.COMMODITIES:
-            surplus = comp.stocks[c] - self.buffer(comp, c)
+            surplus = me.stocks[c] - self.buffer(me, c)
             if surplus > 0.01:
-                comp._offers[c] = surplus
+                act.offer(c, surplus)
 
-    def use_tools(self, engine, comp: Company) -> None:
-        if not comp.has("plant"):
+    def use_tools(self, obs: Observation) -> None:
+        me, world, act = obs.me, obs.world, obs.act
+        if not me.has("plant"):
             return
-        t = comp.traits
-        tools = comp.tools
-        if not tools.insta_active(engine.tick) \
-                and engine.rng.random() < t["marketing"] * 0.45 \
+        t = me.traits
+        tools = me.tools
+        if not tools.insta_active(world.tick) \
+                and obs.rng.random() < t["marketing"] * 0.45 \
                 * self.p["insta_prob_scale"] \
-                and comp.cash - self.reserve(comp) > insta_campaign_cost():
-            engine._spend(comp, insta_campaign_cost(), reason="tools")
-            tools.insta_until = engine.tick + INSTA_DURATION_TICKS
-            tools.insta_strength = 1.0
-            engine.chronicle.add(engine.tick, "tool",
-                               f"{comp.name} dispara uma campanha no InstaSim "
-                               f"(US$ {insta_campaign_cost():,.0f}) para empurrar "
-                               f"seus dispositivos.", comp.name)
-        if not tools.zap_active(engine.tick) and comp.stocks["device"] > 20 \
-                and engine.rng.random() < t["marketing"] * 0.35 \
+                and me.cash - self.reserve(me) > insta_campaign_cost():
+            act.spend(insta_campaign_cost(), reason="tools")
+            act.set_tool("insta", until=world.tick + INSTA_DURATION_TICKS,
+                         strength=1.0)
+            act.narrate("tool",
+                        f"{me.name} dispara uma campanha no InstaSim "
+                        f"(US$ {insta_campaign_cost():,.0f}) para empurrar "
+                        f"seus dispositivos.")
+        if not tools.zap_active(world.tick) and me.stocks["device"] > 20 \
+                and obs.rng.random() < t["marketing"] * 0.35 \
                 * self.p["zap_prob_scale"] \
-                and comp.cash - self.reserve(comp) > zap_campaign_cost():
-            engine._spend(comp, zap_campaign_cost(), reason="tools")
-            tools.zap_until = engine.tick + ZAP_DURATION_TICKS
-            engine.chronicle.add(engine.tick, "tool",
-                               f"{comp.name} abre canal de vendas no ZapSim "
-                               f"(US$ {zap_campaign_cost():,.0f}).", comp.name)
+                and me.cash - self.reserve(me) > zap_campaign_cost():
+            act.spend(zap_campaign_cost(), reason="tools")
+            act.set_tool("zap", until=world.tick + ZAP_DURATION_TICKS)
+            act.narrate("tool",
+                        f"{me.name} abre canal de vendas no ZapSim "
+                        f"(US$ {zap_campaign_cost():,.0f}).")
         # VidSim: ferramenta de elo alto — quem já vende dispositivo e tem
         # marketing forte produz vídeo (decisão por limiar, sem sorteio:
         # é capex de marca, não impulso). Custa ~7x o InstaSim e dura 2x.
-        if not tools.vid_active(engine.tick) and t["marketing"] >= 0.6 \
-                and comp.stocks["device"] > 10 \
-                and comp.cash - self.reserve(comp) > vid_campaign_cost():
-            engine._spend(comp, vid_campaign_cost(), reason="tools")
-            tools.vid_until = engine.tick + VID_DURATION_TICKS
-            engine.chronicle.add(engine.tick, "tool",
-                               f"{comp.name} estreia campanha em vídeo no "
-                               f"VidSim (US$ {vid_campaign_cost():,.0f}) para "
-                               f"empurrar seus produtos de elo alto.", comp.name)
+        if not tools.vid_active(world.tick) and t["marketing"] >= 0.6 \
+                and me.stocks["device"] > 10 \
+                and me.cash - self.reserve(me) > vid_campaign_cost():
+            act.spend(vid_campaign_cost(), reason="tools")
+            act.set_tool("vid", until=world.tick + VID_DURATION_TICKS)
+            act.narrate("tool",
+                        f"{me.name} estreia campanha em vídeo no "
+                        f"VidSim (US$ {vid_campaign_cost():,.0f}) para "
+                        f"empurrar seus produtos de elo alto.")
         # LojaSim: quem tem dispositivo parado abre prateleira no
         # marketplace e aceita pagar a comissão sobre o que vender.
-        if not tools.loja_active(engine.tick) \
-                and comp.stocks["device"] >= 15 \
-                and comp.cash - self.reserve(comp) > loja_store_cost():
-            engine._spend(comp, loja_store_cost(), reason="tools")
-            tools.loja_until = engine.tick + LOJA_DURATION_TICKS
-            engine.chronicle.add(engine.tick, "tool",
-                               f"{comp.name} abre loja no LojaSim "
-                               f"(US$ {loja_store_cost():,.0f} + "
-                               f"{LOJA_FEE_PCT:.0%} por venda).", comp.name)
+        if not tools.loja_active(world.tick) \
+                and me.stocks["device"] >= 15 \
+                and me.cash - self.reserve(me) > loja_store_cost():
+            act.spend(loja_store_cost(), reason="tools")
+            act.set_tool("loja", until=world.tick + LOJA_DURATION_TICKS)
+            act.narrate("tool",
+                        f"{me.name} abre loja no LojaSim "
+                        f"(US$ {loja_store_cost():,.0f} + "
+                        f"{LOJA_FEE_PCT:.0%} por venda).")
 
 
 
@@ -649,35 +658,39 @@ class Engine:
     # -- decisões ---------------------------------------------------------
     # -- decisões (delegadas à política plugável) -------------------------
     # Os métodos _decide/_reserve/... permanecem como fachada de
-    # compatibilidade e delegam para a política instalada (por padrão a
-    # HeuristicPolicy). Trocar a política não toca o motor.
+    # compatibilidade: constroem a Observation da empresa e delegam
+    # para a política instalada (por padrão a HeuristicPolicy). A
+    # política nunca recebe o motor nem a empresa crua (guarda v2,
+    # docs/OBSERVATION-SPEC.md). Trocar a política não toca o motor.
     def _reserve(self, comp: Company) -> float:
-        return self.policy.reserve(comp)
+        return self.policy.reserve(build_company_view(self, comp))
 
     def _decide(self, comp: Company) -> None:
         comp._offers = {}
         comp._buys = {}
         if not comp.alive:
             return
-        self.policy.decide(self, comp)
+        self.policy.decide(build_observation(self, comp))
 
     def _pick_deposit(self, comp: Company):
-        return self.policy.pick_deposit(self, comp)
+        return self.policy.pick_deposit(build_observation(self, comp))
 
     def _build_downstream(self, comp: Company, spendable: float) -> bool:
-        return self.policy.build_downstream(self, comp, spendable)
+        return self.policy.build_downstream(
+            build_observation(self, comp), spendable)
 
     def _plan_buys(self, comp: Company) -> None:
-        return self.policy.plan_buys(self, comp)
+        return self.policy.plan_buys(build_observation(self, comp))
 
     def _buffer(self, comp: Company, commodity: str) -> float:
-        return self.policy.buffer(comp, commodity)
+        return self.policy.buffer(build_company_view(self, comp),
+                                  commodity)
 
     def _plan_sells(self, comp: Company) -> None:
-        return self.policy.plan_sells(self, comp)
+        return self.policy.plan_sells(build_observation(self, comp))
 
     def _use_tools(self, comp: Company) -> None:
-        return self.policy.use_tools(self, comp)
+        return self.policy.use_tools(build_observation(self, comp))
 
     def _note_link(self, comp: Company, stage: int) -> None:
         names = {1: "extração", 2: "refino", 3: "componentes",

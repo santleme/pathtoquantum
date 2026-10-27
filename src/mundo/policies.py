@@ -82,40 +82,40 @@ def build_policy(spec: PolicySpec) -> Policy:
 
 
 class PolicyRouter(Policy):
-    """Despacha ``decide`` e as fachadas por empresa (``comp.cid``)."""
+    """Despacha ``decide`` e as fachadas por empresa (``obs.me.cid``)."""
 
     def __init__(self, by_cid: dict | None = None,
                  default: Policy | None = None):
         self.by_cid = dict(by_cid or {})
         self.default = default if default is not None else HeuristicPolicy()
 
-    def _for(self, comp) -> Policy:
-        return self.by_cid.get(comp.cid, self.default)
+    def _for(self, cid: int) -> Policy:
+        return self.by_cid.get(cid, self.default)
 
     # -- a interface que o motor chama --------------------------------
-    def decide(self, engine, comp) -> None:
-        self._for(comp).decide(engine, comp)
+    def decide(self, obs) -> None:
+        self._for(obs.me.cid).decide(obs)
 
-    def reserve(self, comp) -> float:
-        return self._for(comp).reserve(comp)
+    def reserve(self, me) -> float:
+        return self._for(me.cid).reserve(me)
 
-    def pick_deposit(self, engine, comp):
-        return self._for(comp).pick_deposit(engine, comp)
+    def pick_deposit(self, obs):
+        return self._for(obs.me.cid).pick_deposit(obs)
 
-    def build_downstream(self, engine, comp, spendable: float) -> bool:
-        return self._for(comp).build_downstream(engine, comp, spendable)
+    def build_downstream(self, obs, spendable: float) -> bool:
+        return self._for(obs.me.cid).build_downstream(obs, spendable)
 
-    def plan_buys(self, engine, comp) -> None:
-        self._for(comp).plan_buys(engine, comp)
+    def plan_buys(self, obs) -> None:
+        self._for(obs.me.cid).plan_buys(obs)
 
-    def buffer(self, comp, commodity: str) -> float:
-        return self._for(comp).buffer(comp, commodity)
+    def buffer(self, me, commodity: str) -> float:
+        return self._for(me.cid).buffer(me, commodity)
 
-    def plan_sells(self, engine, comp) -> None:
-        self._for(comp).plan_sells(engine, comp)
+    def plan_sells(self, obs) -> None:
+        self._for(obs.me.cid).plan_sells(obs)
 
-    def use_tools(self, engine, comp) -> None:
-        self._for(comp).use_tools(engine, comp)
+    def use_tools(self, obs) -> None:
+        self._for(obs.me.cid).use_tools(obs)
 
 
 def build_router(specs) -> PolicyRouter:
