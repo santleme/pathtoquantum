@@ -595,3 +595,44 @@ seeds 42/7/11/23, 120 ticks.
   Benchmarks no Kaggle: **13,3× a n=100** (259,8 × 3.443,5 ticks/s)
   e **8,6× a n=1.000** (35,1 × 303,5 ticks/s). Outputs em
   `results/veredito-fase5/`. **Fase 5 encerrada; Degrau 1 completo.**
+
+## Degrau 2 — Smoke da forja (sub-issue #5) (27/10/2026)
+
+**Entregue**
+- O que faltava do loop: `forge/smoke.py` (driver: pai → mutação →
+  guarda AST → stage1 → stage2 nos melhores; registro JSONL por
+  iteração com hash, pai, mutação, status
+  accepted/rejected_guard/error/duplicate, S1/S2 e melhor S até
+  aqui; iteração 0 = semente avaliada nos dois estágios) e
+  `forge/mutator.py` (o mutador do smoke).
+- **Decisão do mutador (registrada):** o desenho prevê mutador LLM
+  (OpenEvolve + ensemble Gemini), mas não há chave/endpoint de LLM
+  disponível no ambiente Kaggle e nenhum segredo novo entra sem o
+  fundador. O smoke existe para provar o PIPELINE, então o mutador
+  é programático, em nível de AST: perturbação de genes via
+  `self.p[...]` num `__init__` da EvolvedPolicy (mesmos limites
+  [lo, hi] e passos do espaço do torneio) + jitter de literais do
+  EVOLVE-BLOCK, com edições cirúrgicas que preservam comentários e
+  marcadores. Qual LLM entra na corrida forge-v1 (#6) segue sendo
+  decisão do fundador.
+- Testes: mutador (linhagem de 25 mutações sempre limpa na guarda,
+  determinismo por seed, limites dos genes respeitados, override
+  com efeito real em `policy.p`) e smoke em miniatura ponta a
+  ponta (aceitação viva: S da semente == S do genoma 0 nos blocos).
+  **Suíte 202/202.**
+- Notebook `notebooks/smoke-forja.ipynb` (protocolo
+  pré-registrado, loader recursivo, raiz do bundle no sys.path
+  para a `forge/`), bundle **src11** verificado por download
+  (md5 idêntico ao repo), kernel
+  `pascalcoimbra/ptq-smoke-forja-v1` (id 141092991).
+
+**Veredito: SMOKE FORJA: OK** — 30/30 iterações, loop em 138 s:
+30 aceitos, 0 rejeitados pela guarda, 0 erros, 0 duplicados.
+Semente `prog:d6a18ace2df2`: S1=0,4953, S2=0,4946. Melhor
+programa `prog:faa2b66c01b0`: **S1=0,5617, S2=0,5261** — a curva
+de best_S1 subiu em 4 degraus (0,4953 → 0,5039 → 0,5055 →
+0,5289 → 0,5617) e o melhor validado (stage2) ficou +0,0315
+acima da semente. Pipeline provado: guarda, cascata, artefatos e
+curva de S. Outputs no kernel (`smoke-forja.json`,
+`smoke_log.jsonl`, `best_program.py`); coleta para
+`results/smoke-forja/` pelo monitor.
