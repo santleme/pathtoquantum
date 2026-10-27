@@ -37,6 +37,14 @@ Artefatos em out_dir: programs/ (todo programa avaliado), run_log
 .jsonl, run_summary.json (checkpoint a cada 25 iterações),
 archive.json, champion.py, final_evaluation.json, top5_diffs.md.
 
+Instrumentação de tempo (observação pura — não muda prompt,
+cascata, portão nem seed, e nunca toca no RNG): cada registro do
+run_log carrega ``timing`` (mutação LLM total e por rota, stage1,
+stage2 e total da iteração) e o fim da corrida imprime o bloco
+TEMPOS com os agregados (total, média/mediana por iteração, soma
+por fase, fase dominante). É assim que se descobre onde as horas
+do Kaggle foram: geração LLM, avaliação ou retries/backoff.
+
 Uso no Kaggle (notebook notebooks/forge-v1.ipynb):
     python forge/run.py --iterations 300 --out /kaggle/working/forge-v1
 Local (testes): FORGE_STAGE1_EPISODES / FORGE_STAGE2_EPISODES
@@ -49,6 +57,7 @@ import difflib
 import importlib.util
 import json
 import random
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -106,11 +115,17 @@ class ProgrammaticMutator:
     def __init__(self):
         self._mut = _load_sibling("forge_mutator", "mutator.py")
         self.stats = {"calls": {"programmatic/ast": 0}, "fallbacks": 0,
-                      "failures": 0}
+                      "failures": 0, "route_seconds": {}}
 
     def mutate(self, source, rng, feedback=None):
         self.stats["calls"]["programmatic/ast"] += 1
-        return self._mut.mutate(source, rng)
+        t0 = time.perf_counter()
+        try:
+            return self._mut.mutate(source, rng)
+        finally:
+            acc = self.stats["route_seconds"]
+            acc["programmatic/ast"] = acc.get("programmatic/ast", 0.0) \
+                + (time.perf_counter() - t0)
 
 
 def build_mutator(kind: str):
@@ -242,14 +257,120 @@ def _top_diffs_md(steps: list[dict], champion_hash: str) -> str:
 
 
 # --------------------------------------------------------------------- #
+# Instrumentação de tempo (observação pura)
+# --------------------------------------------------------------------- #
+_PHASE_LABELS = {"mutate_s": "mutação LLM",
+                 "stage1_s": "avaliação stage1",
+                 "stage2_s": "avaliação stage2",
+                 "other_s": "outro (seleção, guarda e E/S)"}
+
+
+def _route_seconds_of(mut) -> dict:
+    """Cópia do acumulado de tempo por rota do mutador (se houver)."""
+    stats = getattr(mut, "stats", None) or {}
+    return dict(stats.get("route_seconds") or {})
+
+
+def _route_delta(before: dict, after: dict) -> dict:
+    """Quanto cada rota gastou entre dois instantâneos do acumulado."""
+    return {k: round(after[k] - before.get(k, 0.0), 3) for k in after
+            if after[k] - before.get(k, 0.0) > 0}
+
+
+def summarize_timings(records: list[dict]) -> dict:
+    """Agrega os ``timing`` dos registros do run_log.
+
+    Média/mediana e somas por fase cobrem só as iterações do loop
+    (iteration >= 1); a semente (iteração 0) entra à parte em
+    ``seed_total_s`` e nas rotas. ``other_s`` é o resíduo do total
+    (seleção de pai, guarda AST, escrita de arquivos). Função pura:
+    os testes a exercem com registros sintéticos e relógio falso.
+    """
+    timed = [r for r in records if isinstance(r.get("timing"), dict)]
+    loop = [r for r in timed if (r.get("iteration") or 0) >= 1]
+
+    def _sum(rows, key):
+        return sum((r["timing"].get(key) or 0.0) for r in rows)
+
+    totals = [r["timing"].get("total_s") or 0.0 for r in loop]
+    total = sum(totals)
+    phases = {"mutate_s": _sum(loop, "mutate_s"),
+              "stage1_s": _sum(loop, "stage1_s"),
+              "stage2_s": _sum(loop, "stage2_s")}
+    phases["other_s"] = max(0.0, total - sum(phases.values()))
+    dominant_key = max(phases, key=lambda k: phases[k]) if loop \
+        else "other_s"
+    routes: dict[str, float] = {}
+    for r in timed:
+        for k, v in (r["timing"].get("routes_s") or {}).items():
+            routes[k] = routes.get(k, 0.0) + v
+    seed_rec = next((r for r in timed if r.get("iteration") == 0), None)
+    return {
+        "iterations_timed": len(loop),
+        "total_s": round(total, 3),
+        "mean_s": round(total / len(loop), 3) if loop else 0.0,
+        "median_s": round(statistics.median(totals), 3) if totals
+        else 0.0,
+        "phases_s": {k: round(v, 3) for k, v in phases.items()},
+        "phases_pct": {k: (round(100.0 * v / total, 1) if total > 0
+                           else 0.0) for k, v in phases.items()},
+        "dominant_phase": _PHASE_LABELS[dominant_key],
+        "dominant_phase_key": dominant_key,
+        "routes_s": {k: round(v, 3) for k, v in sorted(
+            routes.items(), key=lambda kv: -kv[1])},
+        "seed_total_s": (round(seed_rec["timing"].get("total_s") or 0.0,
+                               3) if seed_rec is not None else None),
+    }
+
+
+def format_timing_block(timings: dict) -> str:
+    """O bloco TEMPOS impresso no fim da corrida (espírito do veredito)."""
+    p, pct = timings["phases_s"], timings["phases_pct"]
+    lines = [
+        "TEMPOS DA CORRIDA (instrumentação — observação pura, "
+        "sem efeito nas decisões):",
+        f"  loop: {timings['total_s']:.1f}s em "
+        f"{timings['iterations_timed']} iterações "
+        f"(média {timings['mean_s']:.2f}s, mediana "
+        f"{timings['median_s']:.2f}s por iteração)",
+        f"  mutação LLM {p['mutate_s']:.1f}s ({pct['mutate_s']:.1f}%) | "
+        f"stage1 {p['stage1_s']:.1f}s ({pct['stage1_s']:.1f}%) | "
+        f"stage2 {p['stage2_s']:.1f}s ({pct['stage2_s']:.1f}%) | "
+        f"outro {p['other_s']:.1f}s ({pct['other_s']:.1f}%)",
+        f"  fase dominante: {timings['dominant_phase']}",
+    ]
+    if timings.get("routes_s"):
+        rotas = "; ".join(f"{k} {v:.1f}s"
+                          for k, v in timings["routes_s"].items())
+        lines.append("  rotas (tempo acumulado, inclui retries e "
+                     f"backoff do transporte): {rotas}")
+    if timings.get("seed_total_s") is not None:
+        lines.append(f"  semente (iteração 0): "
+                     f"{timings['seed_total_s']:.1f}s")
+    if timings.get("blind_evaluation_s") is not None:
+        lines.append(f"  avaliação cega: "
+                     f"{timings['blind_evaluation_s']:.1f}s")
+    if timings.get("run_wall_s") is not None:
+        lines.append(f"  parede total (run_forge): "
+                     f"{timings['run_wall_s']:.1f}s")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------- #
 # A corrida
 # --------------------------------------------------------------------- #
 def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
               mutator_kind: str = "llm",
               threshold: float = CASCADE_THRESHOLD, log=print,
               final: bool = True, test_blocks_override=None,
-              final_processes: int = 4, mutator=None) -> dict:
-    """Roda a corrida e devolve o resumo (também gravado em out_dir)."""
+              final_processes: int = 4, mutator=None,
+              clock=time.time) -> dict:
+    """Roda a corrida e devolve o resumo (também gravado em out_dir).
+
+    ``clock``: relógio da instrumentação de tempo (injetável nos
+    testes); só observa — nenhuma decisão lê o relógio.
+    """
+    run_t0 = clock()
     ev = _load_sibling("forge_evaluator", "evaluator.py")
     mut = mutator if mutator is not None else build_mutator(mutator_kind)
     rng = random.Random(seed)
@@ -281,19 +402,27 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
             best_validated = {"hash": h, "S1": s1, "S2": s2}
 
     def evaluate(h: str, source: str, want_stage2: bool):
-        """(S1, S2, métricas, artefatos, erro|None) de um programa."""
+        """(S1, S2, métricas, artefatos, erro|None, tempos) de um
+        programa — tempos = {"stage1_s": ..., "stage2_s": ...|None},
+        medidos com o relógio injetado (observação pura)."""
         path = prog_dir / f"prog_{h}.py"
         path.write_text(source, encoding="utf-8")
+        timing = {"stage1_s": None, "stage2_s": None}
+        t_s1 = clock()
         try:
             m1, a1 = _eval_stage(ev, path, 1)
         except Exception as exc:
-            return None, None, {}, {}, f"{type(exc).__name__}: {exc}"[:400]
+            timing["stage1_s"] = round(clock() - t_s1, 3)
+            return None, None, {}, {}, \
+                f"{type(exc).__name__}: {exc}"[:400], timing
+        timing["stage1_s"] = round(clock() - t_s1, 3)
         if m1.get("valid", 0.0) < 1.0:
             return None, None, {}, a1, _reason(
-                a1, "avaliador devolveu valid=0 no stage1")
+                a1, "avaliador devolveu valid=0 no stage1"), timing
         s1 = float(m1["S"])
         s2, m2, a2 = None, {}, {}
         if want_stage2(s1):
+            t_s2 = clock()
             try:
                 m2, a2 = _eval_stage(ev, path, 2)
                 if m2.get("valid", 0.0) >= 1.0:
@@ -306,6 +435,7 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                 log(f"  stage2 falhou prog:{h}: "
                     f"{type(exc).__name__}: {exc}")
                 m2 = {}
+            timing["stage2_s"] = round(clock() - t_s2, 3)
         metrics = {"S1": s1, "S2": s2,
                    "stage_mean": m1.get("stage_mean"),
                    "facilities_mean": m1.get("facilities_mean"),
@@ -313,7 +443,7 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                    "alive_rate": m1.get("alive_rate"),
                    "tool_rate": m1.get("tool_rate")}
         artifacts = a2 if s2 is not None else a1
-        return s1, s2, metrics, artifacts, None
+        return s1, s2, metrics, artifacts, None, timing
 
     def register(h, source, parent, iteration, island, desc, s1, s2,
                  metrics, artifacts):
@@ -328,7 +458,8 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
     def checkpoint(done: int) -> None:
         partial = {"ok": False, "checkpoint": True,
                    "iterations_completed": done,
-                   "best_by_S1": best_s1, "best_by_S2": best_validated}
+                   "best_by_S1": best_s1, "best_by_S2": best_validated,
+                   "timings": summarize_timings(records)}
         (out / "run_summary.json").write_text(
             json.dumps(partial, ensure_ascii=False, indent=1),
             encoding="utf-8")
@@ -344,20 +475,27 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
         seed_source = SEED_PATH.read_text(encoding="utf-8")
         seed_hash = program_hash(seed_source)
         sources[seed_hash] = seed_source
-        t0 = time.time()
+        t0 = clock()
+        seed_timing = {"mutate_s": 0.0, "stage1_s": None,
+                       "stage2_s": None, "routes_s": {}}
         violations = validate_program(seed_source)
         if violations:
             summary["fatal"] = "semente rejeitada pela guarda: " \
                 + "; ".join(violations)
             emit({"iteration": 0, "hash": seed_hash, "status": "fatal",
-                  "reason": summary["fatal"]})
+                  "reason": summary["fatal"],
+                  "timing": {**seed_timing,
+                             "total_s": round(clock() - t0, 3)}})
             return summary
-        s1, s2, metrics, artifacts, err = evaluate(
+        s1, s2, metrics, artifacts, err, ev_timing = evaluate(
             seed_hash, seed_source, lambda _s: True)
+        seed_timing.update(ev_timing)
         if err is not None:
             summary["fatal"] = f"semente falhou na avaliação: {err}"
             emit({"iteration": 0, "hash": seed_hash, "status": "fatal",
-                  "reason": err})
+                  "reason": err,
+                  "timing": {**seed_timing,
+                             "total_s": round(clock() - t0, 3)}})
             return summary
         register(seed_hash, seed_source, None, 0, 0, "semente (geração 0)",
                  s1, s2, metrics, artifacts)
@@ -365,7 +503,9 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
               "mutation": "semente (geração 0)", "status": "seed",
               "reason": "", "S1": s1, "S2": s2, "island": 0,
               "best_S1": best_s1["S1"], "best_S2": best_validated["S2"],
-              "seconds": round(time.time() - t0, 2)})
+              "seconds": round(clock() - t0, 2),
+              "timing": {**seed_timing,
+                         "total_s": round(clock() - t0, 3)}})
         log(f"[000/{iterations}] semente prog:{seed_hash} "
             f"S1={s1:.4f} S2={s2:.4f}")
 
@@ -374,7 +514,7 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
         completed = 0
         attempts = 1 if mutator_kind == "llm" else 3
         for i in range(1, iterations + 1):
-            t0 = time.time()
+            t0 = clock()
             island = i % NUM_ISLANDS
             members = islands[island] or [seed_hash]
             roll = rng.random()
@@ -412,6 +552,8 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
 
             child, desc, child_hash = None, "", None
             cand_hash, last_exc = None, None
+            routes_before = _route_seconds_of(mut)
+            t_mut = clock()
             for _attempt in range(attempts):
                 try:
                     cand, cand_desc = mut.mutate(parent_source, rng,
@@ -423,6 +565,10 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                 if cand_hash not in seen:
                     child, desc, child_hash = cand, cand_desc, cand_hash
                     break
+            iter_timing = {"mutate_s": round(clock() - t_mut, 3),
+                           "stage1_s": None, "stage2_s": None,
+                           "routes_s": _route_delta(
+                               routes_before, _route_seconds_of(mut))}
             base = {"iteration": i, "parent": parent_hash,
                     "island": island,
                     "mutation": desc if child else
@@ -431,7 +577,7 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                     "best_S1": best_s1["S1"],
                     "best_S2": best_validated["S2"]
                     if best_validated else None,
-                    "seconds": round(time.time() - t0, 2)}
+                    "seconds": round(clock() - t0, 2)}
             if child is None:
                 status = "rejected_llm" if last_exc is not None and \
                     "MutationError" in type(last_exc).__name__ else \
@@ -440,7 +586,9 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                           if last_exc is not None
                           else "hash já avaliado")
                 emit({**base, "hash": cand_hash, "status": status,
-                      "reason": reason, **tail})
+                      "reason": reason, **tail,
+                      "timing": {**iter_timing,
+                                 "total_s": round(clock() - t0, 3)}})
                 completed += 1
                 log(f"[{i:03d}/{iterations}] {status} "
                     f"prog:{cand_hash}: {reason[:140]}")
@@ -454,7 +602,9 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                     + "\n- ".join(violations)
                 emit({**base, "hash": child_hash,
                       "status": "rejected_guard",
-                      "reason": "; ".join(violations)[:400], **tail})
+                      "reason": "; ".join(violations)[:400], **tail,
+                      "timing": {**iter_timing,
+                                 "total_s": round(clock() - t0, 3)}})
                 completed += 1
                 log(f"[{i:03d}/{iterations}] rejected_guard "
                     f"prog:{child_hash}: {violations[0][:120]}")
@@ -463,11 +613,14 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
             def want_stage2(s: float) -> bool:
                 return s >= threshold or s > best_s1["S1"]
 
-            s1, s2, metrics, artifacts, err = evaluate(
+            s1, s2, metrics, artifacts, err, ev_timing = evaluate(
                 child_hash, child, want_stage2)
+            iter_timing.update(ev_timing)
             if err is not None:
                 emit({**base, "hash": child_hash, "status": "error",
-                      "reason": err, **tail})
+                      "reason": err, **tail,
+                      "timing": {**iter_timing,
+                                 "total_s": round(clock() - t0, 3)}})
                 completed += 1
                 log(f"[{i:03d}/{iterations}] error prog:{child_hash}: "
                     f"{err[:140]}")
@@ -479,7 +632,9 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                   "best_S1": best_s1["S1"],
                   "best_S2": best_validated["S2"]
                   if best_validated else None,
-                  "seconds": round(time.time() - t0, 2)})
+                  "seconds": round(clock() - t0, 2),
+                  "timing": {**iter_timing,
+                             "total_s": round(clock() - t0, 3)}})
             completed += 1
             log(f"[{i:03d}/{iterations}] accepted prog:{child_hash} "
                 f"S1={s1:.4f} S2={s2 if s2 is None else round(s2, 4)} "
@@ -513,12 +668,15 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
             (out / "champion.py").write_text(sources[champion["hash"]],
                                              encoding="utf-8")
             summary["champion_hash"] = champion["hash"]
+        blind_s = None
         if final and champion is not None:
             log("avaliação cega: abrindo as seeds de teste "
                 "(final=True, protocolo da épica)...")
+            t_blind = clock()
             fe = run_blind_evaluation(
                 out, prog_dir, champion["hash"], seed_hash,
                 test_blocks_override, final_processes, log)
+            blind_s = clock() - t_blind
             summary["final_evaluation"] = fe
             summary["verdict"] = f"FORGE-V1: {fe['verdict']}"
             steps = top_diffs(archive, champion["hash"], sources)
@@ -530,6 +688,12 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                 f"IC95 {fe['delta_vs_tournament']['ci95']} | "
                 f"vs semente {fe['delta_vs_seed']['mean']:+.4f} -> "
                 f"{summary['verdict']}")
+        timings = summarize_timings(records)
+        if blind_s is not None:
+            timings["blind_evaluation_s"] = round(blind_s, 3)
+        timings["run_wall_s"] = round(clock() - run_t0, 3)
+        summary["timings"] = timings
+        log(format_timing_block(timings))
         checkpoint(completed)
         return summary
     finally:

@@ -114,6 +114,11 @@ class NoKeysError(RuntimeError):
     """Nenhuma chave de LLM disponível (NVIDIA, Gemini nem Groq)."""
 
 
+# Relógio da instrumentação de tempo por rota (observação pura):
+# injetável para os testes provarem o acúmulo sem rede nem espera.
+_perf = time.perf_counter
+
+
 # --------------------------------------------------------------------- #
 # Chaves — env ou Kaggle Secrets; valores NUNCA aparecem em saída
 # --------------------------------------------------------------------- #
@@ -382,7 +387,8 @@ class LLMMutator:
                 "nenhuma chave de LLM (NVIDIA_API_KEY/GEMINI_API_KEY/"
                 "GROQ_API_KEY) disponível — cadastre os Secrets no "
                 "Kaggle")
-        self.stats = {"calls": {}, "fallbacks": 0, "failures": 0}
+        self.stats = {"calls": {}, "fallbacks": 0, "failures": 0,
+                      "route_seconds": {}}
 
     # -- cadeia de rotas de uma iteração ------------------------------ #
     def _route_chain(self, rng: random.Random) -> list[tuple[str, str]]:
@@ -401,7 +407,15 @@ class LLMMutator:
     def _call(self, provider: str, model: str, messages) -> str:
         key = f"{provider}/{model}"
         self.stats["calls"][key] = self.stats["calls"].get(key, 0) + 1
-        return self.clients[provider].chat(model, messages)
+        # Instrumentação: o tempo da rota inclui retries/backoff do
+        # transporte (é dentro de chat() que eles dormem) — medir aqui
+        # é medir onde as horas vão, sem tocar em decisão alguma.
+        t0 = _perf()
+        try:
+            return self.clients[provider].chat(model, messages)
+        finally:
+            acc = self.stats.setdefault("route_seconds", {})
+            acc[key] = acc.get(key, 0.0) + (_perf() - t0)
 
     # -- a interface do loop ------------------------------------------ #
     def mutate(self, parent_source: str, rng: random.Random,
