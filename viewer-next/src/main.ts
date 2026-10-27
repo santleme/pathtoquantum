@@ -1,8 +1,10 @@
-// Viewer-next (F0+F1+F2) — "A Terra de verdade" + "A crônica vira show": base
-// cartográfica real (Natural Earth), entidades orientadas a dados, replay compatível
-// com ?run=, feed da crônica por kind/company com hierarquia, destaque de novo e
-// clique-para-saltar (VIS-01/02/03/04/07, SPEC-VISUAL-WOW). Lentes (VIS-05) e cadeia
-// (VIS-06) são as fatias F3–F4.
+// Viewer-next (F0+F1+F2+F3) — "A Terra de verdade" + "A crônica vira show" +
+// lente Empresas e placar-ranking: base cartográfica real (Natural Earth),
+// entidades orientadas a dados, replay compatível com ?run=, feed da crônica por
+// kind/company com hierarquia, destaque de novo e clique-para-saltar
+// (VIS-01/02/03/04/07), mecanismo de lentes com Empresas padrão, seleção por
+// canal não-cor e placar com posição/segmentos de elo/Δ de caixa (VIS-05/08).
+// A barra da cadeia (VIS-06) é a fatia F4.
 import { feature } from 'topojson-client';
 import type { FeatureCollection } from 'geojson';
 import {
@@ -14,13 +16,14 @@ import {
   type RunData,
   type WorldData,
 } from './contracts';
+import { boardRowHtml, nearestCompanyId, rankCompanies } from './board';
 import { cellToLonLat, citiesFromWorld, depositsFromFrame } from './entities';
 import { feedItemHtml, narrativeItems, newItemIndexes, tickFromFeedTarget } from './feed';
+import { DEFAULT_LENS_ID, emphasisAlpha, LENSES, resolveLensSelection } from './lenses';
 import { CanvasMapSurface, type MapSurface } from './mapsurface';
-import { resourceInfo, STAGE_LABELS } from './resources';
+import { resourceInfo } from './resources';
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
-const money = (v: number) => `US$ ${(v / 1e6).toFixed(1).replace('.', ',')}M`;
 
 let run: RunData;
 let world: WorldData;
@@ -29,11 +32,16 @@ let idx = 0;
 let timer: number | undefined;
 /** Lote de eventos "novos" do frame atual (VIS-04) — índices na crônica original. */
 let newBatch: Set<number> = new Set();
+/** Lente ativa (VIS-05) — registro em lenses.ts; trocar nunca move o frame. */
+let activeLensId: string = DEFAULT_LENS_ID;
+/** Empresa selecionada (id do frame) ou null — destaque por anel/rótulo/selo. */
+let selectedId: number | null = null;
 
 interface Route {
   from: [number, number];
   to: [number, number];
   color: string;
+  companyId: number;
 }
 let routes: Route[] = [];
 let particles: { route: number; t: number; speed: number }[] = [];
@@ -68,6 +76,7 @@ async function loadAll(): Promise<void> {
   scrub.value = '0';
   // Primeiro frame: o lote de novos é tudo que já aconteceu até ele (VIS-04).
   newBatch = newItemIndexes(run.chronicle, null, run.frames[0].tick);
+  renderLenses();
   resize();
   render();
   play();
@@ -113,12 +122,23 @@ function renderDynamic(): void {
   ctx.clearRect(0, 0, dyn.width, dyn.height);
 
   // Território e instalações (célula → lon/lat → projeção; nada de lista fixa).
+  // Lente Empresas: a cor é a do frame; a seleção recua as demais em alpha e a
+  // selecionada ganha anel + rótulo — canal não-cor (VIS-05).
   for (const c of f.companies) {
+    const alpha = emphasisAlpha(selectedId, c.id);
+    const selected = selectedId === c.id;
+    ctx.save();
+    ctx.globalAlpha = alpha;
     for (const cell of c.territory) {
       const { lon, lat } = cellToLonLat(cell);
       const [x, y] = surface.project(lon, lat);
       ctx.fillStyle = c.color + '55';
       ctx.fillRect(x - 6, y - 6, 12, 12);
+      if (selected) {
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x - 7.5, y - 7.5, 15, 15);
+      }
     }
     for (const fac of c.facilities) {
       const { lon, lat } = cellToLonLat(fac.cell);
@@ -129,7 +149,23 @@ function renderDynamic(): void {
       ctx.font = 'bold 9px monospace';
       ctx.textAlign = 'center';
       ctx.fillText({ mine: 'M', refinery: 'R', factory: 'F', plant: 'P', assembly: 'A' }[fac.kind] ?? '?', x, y + 3);
+      if (selected) {
+        ctx.beginPath();
+        ctx.arc(x, y, 12, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
+    if (selected && c.facilities.length > 0) {
+      const { lon, lat } = cellToLonLat(c.facilities[0].cell);
+      const [x, y] = surface.project(lon, lat);
+      ctx.fillStyle = '#ffd166';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`◉ ${c.name}`, x + 15, y - 10);
+    }
+    ctx.restore();
   }
 
   // Depósitos da corrida (frames): nome legível, recurso por extenso, remaining como barra.
@@ -176,7 +212,7 @@ function buildRoutes(f: Frame): void {
     const to = surface.project(hq.lon, hq.lat);
     for (const fac of c.facilities) {
       const { lon, lat } = cellToLonLat(fac.cell);
-      routes.push({ from: surface.project(lon, lat), to, color: c.color });
+      routes.push({ from: surface.project(lon, lat), to, color: c.color, companyId: c.id });
     }
   }
   particles = Array.from({ length: Math.min(2000, routes.length * 24) }, (_, i) => ({
@@ -198,26 +234,51 @@ function flowTick(): void {
       const my = (r.from[1] + r.to[1]) / 2 - 24; // arco 2.5D seletivo (ADR-001 §3.1)
       const x = (1 - p.t) ** 2 * r.from[0] + 2 * (1 - p.t) * p.t * mx + p.t ** 2 * r.to[0];
       const y = (1 - p.t) ** 2 * r.from[1] + 2 * (1 - p.t) * p.t * my + p.t ** 2 * r.to[1];
+      ctx.globalAlpha = emphasisAlpha(selectedId, r.companyId);
       ctx.fillStyle = r.color;
       ctx.fillRect(x - 1, y - 1, 2, 2);
+      ctx.globalAlpha = 1;
     }
   }
   requestAnimationFrame(flowTick);
 }
 
+/** Seletor de lentes (VIS-05): montado a partir do registro declarativo. */
+function renderLenses(): void {
+  $('lenses').innerHTML = LENSES.map(
+    (l) =>
+      `<button type="button" class="lens-btn${l.id === activeLensId ? ' active' : ''}" data-lens="${l.id}"` +
+      ` aria-pressed="${l.id === activeLensId}">${l.label}${l.status === 'em-breve' ? ' <span class="soon">em breve</span>' : ''}</button>`,
+  ).join('');
+}
+
+/**
+ * Troca de lente: resolve pelo registro e re-renderiza SOBRE O MESMO FRAME —
+ * idx/tick não mudam, nenhum JSON é recarregado; lente "em breve" só avisa.
+ */
+function setLens(requestedId: string): void {
+  const sel = resolveLensSelection(activeLensId, requestedId);
+  activeLensId = sel.activeId;
+  $('lensnote').textContent = sel.notice ?? '';
+  renderLenses();
+  renderDynamic();
+  renderBoard(run.frames[idx]);
+}
+
+/** Seleção de empresa (placar ou mapa): mesmo frame, só ênfase/anel/selo mudam. */
+function setSelected(id: number | null): void {
+  selectedId = selectedId !== null && id === selectedId ? null : id;
+  renderDynamic();
+  renderBoard(run.frames[idx]);
+}
+
 function renderBoard(f: Frame): void {
-  const sorted = [...f.companies].sort((a, b) => b.cash - a.cash);
-  $('board').innerHTML = sorted
-    .map(
-      (c, i) => `<div class="row${c.alive ? '' : ' dead'}">
-        <span class="dot" style="background:${c.color}"></span>
-        <span>${i + 1}. ${c.name} <span class="stage">${c.archetype} · elo: ${STAGE_LABELS[Math.max(0, Math.min(5, c.stage))]}</span></span>
-        <span class="cash">${money(c.cash)}${c.alive ? '' : ' · falida'}</span></div>`,
-    )
-    .join('');
+  const prev = idx > 0 ? run.frames[idx - 1] : null;
+  const entries = rankCompanies(f, prev);
+  $('board').innerHTML = entries.map((e) => boardRowHtml(e, e.company.id === selectedId)).join('');
   $('legend').textContent =
     `◆ depósito (nome + recurso + barra de reserva) · ● cidade-mercado (${citiesFromWorld(world).length} do world_data) · ` +
-    `depósitos neste frame: ${depositsFromFrame(f).length} (da corrida, não do mundo)`;
+    `depósitos neste frame: ${depositsFromFrame(f).length} (da corrida, não do mundo) · clique numa empresa ou no mapa seleciona`;
 }
 
 function renderFeed(f: Frame): void {
@@ -282,6 +343,30 @@ $('scrub').addEventListener('input', (e) => {
 $('feed').addEventListener('click', (e) => {
   const tick = tickFromFeedTarget(e.target);
   if (tick !== null) jumpToTick(tick);
+});
+$('lenses').addEventListener('click', (e) => {
+  const el = (e.target as HTMLElement).closest('[data-lens]') as HTMLElement | null;
+  if (el?.dataset.lens) setLens(el.dataset.lens);
+});
+$('board').addEventListener('click', (e) => {
+  const el = (e.target as HTMLElement).closest('[data-company-id]') as HTMLElement | null;
+  if (el?.dataset.companyId) setSelected(Number(el.dataset.companyId));
+});
+$('flow').addEventListener('click', (e) => {
+  // Clique no mapa (o canvas de fluxo é o de cima): seleciona a empresa mais
+  // próxima; clique no vazio limpa a seleção. Coordenada em px do canvas.
+  const cv = $('flow') as HTMLCanvasElement;
+  const rect = cv.getBoundingClientRect();
+  const x = ((e as MouseEvent).clientX - rect.left) * (cv.width / rect.width);
+  const y = ((e as MouseEvent).clientY - rect.top) * (cv.height / rect.height);
+  const id = nearestCompanyId(run.frames[idx].companies, (lon, lat) => surface.project(lon, lat), x, y);
+  if (id === null) {
+    if (selectedId !== null) {
+      selectedId = null;
+      renderDynamic();
+      renderBoard(run.frames[idx]);
+    }
+  } else setSelected(id);
 });
 window.addEventListener('resize', resize);
 
