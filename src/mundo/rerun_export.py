@@ -117,7 +117,7 @@ def _super_deliveries(chronicle: list[dict]) -> dict[str, list[tuple[int, float]
     for e in chronicle:
         if e.get("kind") != "record":
             continue
-        if "SUPERCOMPUTADOR" not in (e.get("text") or ""):
+        if "entrega um SUPERCOMPUTADOR" not in (e.get("text") or ""):
             continue
         data = e.get("data") or {}
         units = data.get("units", data.get("qty", 1))

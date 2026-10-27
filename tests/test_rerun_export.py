@@ -100,6 +100,42 @@ def test_super_delivered_is_cumulative_from_chronicle():
     assert series.super_total == [(0, 0.0), (12, 1.0), (24, 3.0)]
 
 
+def test_super_delivered_ignores_records_that_only_mention_supercomputer():
+    """Regressão: record que só MENCIONA supercomputador (marco de elo,
+    anúncio) não é entrega — a regra canônica é a mesma frase do
+    chronicle_rich ("entrega um SUPERCOMPUTADOR")."""
+    run = {
+        "seed": 1, "ticks": 24,
+        "frames": [
+            {"tick": 0, "date": "jan/2027", "prices": {},
+             "companies": [{"id": 0, "name": "Acme", "archetype": "X",
+                            "cash": 10.0, "stage": 5, "alive": True,
+                            "facilities": [], "territory": []}],
+             "deposits": []},
+            {"tick": 24, "date": "jan/2029", "prices": {},
+             "companies": [{"id": 0, "name": "Acme", "archetype": "X",
+                            "cash": 9.0, "stage": 5, "alive": True,
+                            "facilities": [], "territory": []}],
+             "deposits": []},
+        ],
+        "chronicle": [
+            {"tick": 3, "kind": "record", "company": "Acme",
+             "text": "MARCO DE ERA: Acme fecha a ERA 1 — é a primeira a "
+                     "dominar o elo de supercomputador.",
+             "data": {"stage": 5, "record": "first_link"}},
+            {"tick": 8, "kind": "record", "company": "Acme",
+             "text": "Acme anuncia a montadora de SUPERCOMPUTADORES. "
+                     "O topo da cadeia está ao alcance.", "data": {}},
+            {"tick": 10, "kind": "record", "company": "Acme",
+             "text": "Acme entrega um SUPERCOMPUTADOR montado por "
+                     "conta própria.", "data": {}},
+        ],
+    }
+    series = rerun_export.build_series(run)
+    assert series.companies[0].super_delivered == [0.0, 1.0]
+    assert series.super_total == [(0, 0.0), (24, 1.0)]
+
+
 def test_export_without_rerun_sdk_raises_unavailable(run_dir, monkeypatch):
     monkeypatch.setitem(sys.modules, "rerun", None)   # força ImportError
     with pytest.raises(rerun_export.RerunUnavailable):
