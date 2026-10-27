@@ -212,6 +212,135 @@ B1 e desta fase, como o B1 entrou)
   empresas com receita do exterior.
 - B2 (equipamentos): Fase 4, sem código adiantado.
 
+## Fase 3 — lançamento do veredito B3 no Kaggle (26/10/2026)
+
+- Bundle novo do fonte pós-Fase 3 como dataset
+  `pascalcoimbra/mundo-autonomo-src5` (ZIP `mundo-src.zip` com `src/` +
+  `pyproject.toml`, mesmo mecanismo dos bundles anteriores),
+  verificado por download: `engine.py` byte-idêntico ao repo (md5),
+  com `country_v2`.
+- Kernel `pascalcoimbra/ptq-veredito-b3-pais-e-importacoes`
+  (kernelId 141077952) empurrado com
+  `datasetDataSources=["pascalcoimbra/mundo-autonomo-src5"]`.
+- **Descoberta de infra (kernel-sonda, mesmo dia):** o Kaggle mudou o
+  layout do mount de datasets — eles NÃO aparecem mais em
+  `/kaggle/input/<slug>/` com o zip dentro, e sim em
+  `/kaggle/input/datasets/<dono>/<slug>/` com a árvore JÁ EXTRAÍDA
+  (sem zip). O loader antigo dos notebooks (glob
+  `/kaggle/input/*/src` + busca do `mundo*.zip`) não encontra o fonte
+  nesse layout: foi essa a causa das mortes na largada (a v1 e a v2
+  deste kernel, e as do torneio v1) — NÃO prontidão/montagem do
+  dataset. Correção aplicada à célula 1 do `veredito-b3.ipynb`
+  (commit `3ce0ee9`): busca recursiva
+  `glob('/kaggle/input/**/src/mundo/__init__.py', recursive=True)`
+  aceitando os dois layouts, com fallback para o zip; a mensagem de
+  erro do loader novo traz o marcador "(loader recursivo)" para o
+  monitor distinguir falha nova de log de versão antiga. Kernel
+  re-empurrado como **versão 3** com o loader corrigido.
+- Monitor `monitor-veredito-b3` (cron da meta, ~15 min): nas checagens
+  desta entrega o endpoint de outputs ainda não mostrava log nem
+  arquivos da v3 e NENHUM sinal de erro (sem PapermillExecutionError,
+  sem SystemExit de nenhum dos loaders) — consistente com
+  fila/execução; a confirmação positiva de largada e o veredito são
+  do monitor, que baixa outputs para `results/veredito-b3/`, commita
+  e reporta quando a corrida concluir.
+
+## Fase 4 — B2 Equipamentos (26/10/2026)
+
+**Entregue** (código atrás de flag; a ADOÇÃO aguarda o veredito desta
+fase, como nas anteriores)
+- `Engine(equip_v2=True, equip_params=None)` — flag nova, desligada
+  por padrão. Desligado: nenhum estado por instalação, nenhum RNG,
+  nenhum bloco no `state_dict`, goldens da Fase 1 **bit-idênticos**
+  (suíte confirma; teste dedicado prova que nenhuma instalação ganha
+  a chave "equip" e que os frames ficam byte-idênticos).
+- **Mecânica** (design §4/B2): estado por instalação no dict da
+  própria instalação (chave "equip", criada preguiçosamente pelo
+  motor): `age` (meses), `cond` h ∈ (0,1], `down_until`, `broken` +
+  cotação de reparo. Capacidade efetiva
+  `capacity · h · (1 − 0,15·min(1, age/240))` aplicada em mina,
+  refinaria e fábricas; desgaste `h −= wear_rate · utilização` só
+  quando a planta opera (parada não desgasta — mothball é decisão);
+  quebra por hazard discreto de Weibull (β=1,6; η por tipo: mina 42,
+  refinaria 50, fábrica/planta 46, montadora 60 meses) sorteado por
+  mês operado. Quebrada, a instalação NÃO produz, NÃO paga opex e
+  espera: reparo é **decisão da política** (8–15% do custo de
+  construção, 1–3 ticks de oficina, lognormal de mediana 1);
+  manutenção preventiva a 2,2% do custo restaura h em +0,5 (com
+  h ≤ 0,3, para 1 tick); overhaul a 60% zera idade e h. Reparo/PM/
+  overhaul são **sinks nomeados** nos flows (`spend_repair`,
+  `spend_maintenance`, `spend_overhaul`) — o ledger de dinheiro fecha
+  sem termo novo; downtime não produz nem consome massa.
+- **A decisão na política** (`HeuristicPolicy.maintain_equipment`,
+  passo 0 do `decide`, só com a flag): `care = 1 − aggression`
+  interpola os limiares DADO da seção "policy" do equipdata — limiar
+  de PM de h≈0,34 (Agressiva: roda até quebrar) a ≈0,64 (arquétipos
+  cuidadosos); reparo pago quando caixa−reserva supera o custo × mult
+  (2,0→1,0 conforme care: quem não cuida, adia o conserto — é daí
+  que sai a disponibilidade menor); overhaul com idade ≥150 meses e
+  h ≤0,45. NENHUM gene novo no genoma: o B2 diferencia arquétipos
+  pelos traços que já existem, e o torneio segue intocado.
+- Observação legal respeitada: idade/condição/status das PRÓPRIAS
+  instalações via `engine.facility_condition`; de rivais, só o
+  sintoma público — a notícia da quebra e, nos frames (só com a flag),
+  `age`/`condition`/`down` por instalação.
+- Crônica: kinds `breakdown` (toda quebra, com idade, condição,
+  custo e estimativa de oficina) e `maintenance` com `data["action"]`
+  em repair/preventive/overhaul (PM leve é rotina — registrada nos
+  flows, narrada só quando para a planta). A causa de falência ganha
+  o modo `quebra` ("rodou a frota até quebrar"). `result()` expõe
+  `equipment` (disponibilidade e contadores por empresa + frota);
+  `driver.EpisodeSpec` ganhou `equip_v2`/`equip_params`;
+  `tables.facilities_table` projeta (F, 4) cid/idade/condição/parada.
+- Parâmetros como DADO: `data/facility_params.json` +
+  `mundo/equipdata.py` (loader/validador com fallback embutido
+  idêntico, matemática pura testável: `weibull_hazard`,
+  `effective_capacity`). Os escalares `hazard_scale`/`wear_scale`
+  (1,0 no mundo) são as alavancas de teste/Deus — os testes forçam
+  quebra e desgaste por override, sem tocar no arquivo.
+- Notebook de veredito **preparado, não lançado**:
+  `notebooks/veredito-b2.ipynb` — já nasce com o loader recursivo
+  pós-mudança do Kaggle. Corridas pareadas (seeds 42/7/11/23, base =
+  mundo vivo completo B1+B3/B4a × B2 off/on, 120 ticks), regra
+  pré-registrada impressa pelo notebook: ledgers fecham (dinheiro c/
+  externo, massa c/ imported) E salientes ON > OFF em ≥3/4 seeds E
+  ≥3 quebras por corrida ON em ≥3/4 E disponibilidade da frota ON em
+  [0,78; 0,95] em ≥3/4 E nenhum arquétipo falido em todas as corridas
+  ON E ≥4 empresas vivas por corrida ON.
+
+**Portão medido** (VM de dev, 2 vCPU compartilhadas)
+- Suíte: **144/144 verde** (118 + 26 do B2: fórmulas puras, ledgers
+  com os sinks, quebra forçada e parada de produção, reparo como
+  decisão — inclusive o adiamento com caixa apertado —, PM
+  leve/pesada, overhaul, causa "quebra", replay, snapshot/restore
+  cruzando quebras forçadas em todo tick, driver e tabelas).
+- Custo do B2: a n=100, dentro do ruído desta VM (mediana
+  intercalada: b1+b3 8,40 ms/tick × b1+b3+b2 8,09 ms/tick — sem
+  adição mensurável; o custo é O(instalações) e pequeno). A n=8 a
+  medição local deu +31% sobre a base b1+b3, mas em números absolutos
+  suspeitos (o clássico mediu 0,84 ms/tick contra 0,33 da Fase 1 —
+  VM carregada por outras frentes); como nas Fases 2–3, a medição
+  limpa fica para a corrida de veredito no Kaggle (4 vCPU).
+- Fumaça estrutural (seed 42, 120 ticks, tudo ligado): 87 quebras,
+  reparos e PM acontecendo em todos os arquétipos, ledger fechando.
+  **Ressalva honesta de calibração:** a disponibilidade da frota
+  nessa fumaça deu 0,965 — ACIMA do teto da faixa do design
+  [0,78; 0,95]. Leitura: em 120 ticks as frotas são jovens (o
+  overhaul, aos 150 meses, nem chega a existir) e o reparo decidido
+  no tick seguinte + oficina de 1–3 ticks dá MTTR curto contra um
+  MTBF de planta nova de ~40–54 meses. Se o veredito confirmar >
+  0,95 nas 4 seeds, é AJUSTAR com as alavancas nomeadas (η menor
+  e/ou oficina mais longa) — não mexi por achismo antes do veredito,
+  como o lítio do B1 na Fase 2.
+
+**Fora da fase**
+- Adoção do B2 (virar padrão) aguarda o veredito do notebook acima,
+  que aguarda por sua vez os vereditos do B1 e do B3 — a fila de
+  adoção é sequencial por desenho.
+- A Fase 5 (núcleo nativo) porta o `step()` final já com o B2 dentro:
+  as tabelas de instalações do design §3.1 (`fac_age`, `fac_cond`,
+  `fac_down_until`) têm agora conteúdo real para portar.
+
 ## Infra Kaggle — novo layout de mount; loaders corrigidos e relançamentos (26/10/2026)
 
 **Diagnóstico** (kernel-sonda `pascalcoimbra/ptq-sonda-input`): o Kaggle
