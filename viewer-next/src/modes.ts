@@ -45,7 +45,7 @@ export interface CompareResult {
 
 export function compareRuns(framesA: Frame[], framesB: Frame[]): CompareResult {
   const last = (frames: Frame[]) => frames[frames.length - 1];
-  const byName = (f: Frame) => new Map((last(f)?.companies ?? []).map((c) => [c.name, c]));
+  const byName = (frames: Frame[]) => new Map((last(frames)?.companies ?? []).map((c) => [c.name, c]));
   const A = byName(framesA);
   const B = byName(framesB);
   const names = [...new Set([...A.keys(), ...B.keys()])].sort();

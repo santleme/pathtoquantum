@@ -8,7 +8,9 @@
 // do elo em disputa, Sankey derivado de stocks/stage e estoques na seleção —
 // e a entrega pública (F5, VIS-09): lockup com marca derivada da capa no header,
 // favicon derivado e legenda viva da lente/frame (legend.ts) no lugar da antiga
-// legenda fixa de símbolos.
+// legenda fixa de símbolos — e o piso/portão final (F6, VIS-07/10/11/12):
+// ?compare= e ?forge= no app novo (modes.ts), seletor de arquivo avulso,
+// prefers-reduced-motion também na camada de fluxo.
 import { feature } from 'topojson-client';
 import type { FeatureCollection } from 'geojson';
 import {
@@ -27,6 +29,14 @@ import { esc, feedItemHtml, narrativeItems, newItemIndexes, tickFromFeedTarget }
 import { DEFAULT_LENS_ID, emphasisAlpha, LENSES, resolveLensSelection } from './lenses';
 import { legendHtml, legendItems } from './legend';
 import { CanvasMapSurface, type MapSurface } from './mapsurface';
+import {
+  compareHtml,
+  compareRuns,
+  forgeHtml,
+  parseRunLog,
+  resolveModeDir,
+  summarizeForge,
+} from './modes';
 import { resourceInfo } from './resources';
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -51,6 +61,14 @@ interface Route {
 }
 let routes: Route[] = [];
 let particles: { route: number; t: number; speed: number }[] = [];
+/** Segunda corrida do ?compare= (frames já parseados) + rótulo (VIS-07). */
+let compareFrames: Frame[] | null = null;
+let compareLabel = '';
+/** prefers-reduced-motion: a camada de fluxo vira estática (VIS-10). */
+const reducedMotion =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 async function fetchJson(url: string): Promise<unknown> {
   const r = await fetch(url);
@@ -59,6 +77,12 @@ async function fetchJson(url: string): Promise<unknown> {
 }
 
 async function loadAll(): Promise<void> {
+  // Modos ?compare=/?forge= disparam primeiro e são INDEPENDENTES do replay
+  // (legado): falhar neles não quebra o replay, e o replay falhar não os impede.
+  const compareDir = resolveModeDir(location.search, 'compare');
+  if (compareDir) void loadCompare(compareDir);
+  const forgeDir = resolveModeDir(location.search, 'forge');
+  if (forgeDir) void loadForge(forgeDir);
   const runDir = resolveRunDir(location.search);
   const framesUrl = runDir ? `${runDir}/frames.json` : 'data/served/frames.json';
   // Abertura = excerto SA 50m; o mundo land-110m (geo/world-110m.json) entra na
@@ -68,8 +92,9 @@ async function loadAll(): Promise<void> {
     fetchJson('data/world_data.json'),
     fetchJson('geo/sa-50m.json'),
   ]);
-  run = parseRunData(framesRaw);
+  const data = parseRunData(framesRaw);
   world = parseWorldData(worldRaw);
+  if (runDir) $('runlabel').textContent = `corrida: ${runDir}`;
   // topojson-client tipa os objetos genericamente; o cast concentra-se nesta fronteira.
   const sa = feature(
     saTopo as Parameters<typeof feature>[0],
@@ -77,16 +102,76 @@ async function loadAll(): Promise<void> {
     (saTopo as any).objects.countries,
   ) as unknown as FeatureCollection;
   surface = new CanvasMapSurface(sa);
+  renderLenses();
+  resize();
+  applyRun(data);
+  play();
+  if (reducedMotion) drawFlow(false);
+  else requestAnimationFrame(flowTick);
+}
+
+/**
+ * Aplica uma corrida (a servida, a do ?run= ou a do seletor de arquivo):
+ * reseta scrub/seleção/lote de novos e re-renderiza tudo sobre o frame 0.
+ */
+function applyRun(data: RunData): void {
+  run = data;
+  selectedId = null;
+  idx = 0;
   const scrub = $('scrub') as HTMLInputElement;
   scrub.max = String(run.frames.length - 1);
   scrub.value = '0';
   // Primeiro frame: o lote de novos é tudo que já aconteceu até ele (VIS-04).
   newBatch = newItemIndexes(run.chronicle, null, run.frames[0].tick);
-  renderLenses();
-  resize();
   render();
-  play();
-  requestAnimationFrame(flowTick);
+  renderComparePanel();
+}
+
+/** Painel ?compare=: compara a corrida ATUAL com a segunda (último frame). */
+function renderComparePanel(): void {
+  if (!compareFrames || !run) return;
+  $('comparetitle').style.display = '';
+  $('compare').innerHTML = compareHtml(compareRuns(run.frames, compareFrames), compareLabel);
+}
+
+async function loadCompare(dir: string): Promise<void> {
+  $('comparetitle').style.display = '';
+  try {
+    compareFrames = parseRunData(await fetchJson(`${dir}/frames.json`)).frames;
+    compareLabel = dir;
+    renderComparePanel();
+  } catch {
+    $('compare').innerHTML = `<div class="ev">Não achei ${esc(dir)}/frames.json para comparar.</div>`;
+  }
+}
+
+async function loadForge(dir: string): Promise<void> {
+  const getJson = async (url: string): Promise<unknown> => {
+    try {
+      return await fetchJson(url);
+    } catch {
+      return null;
+    }
+  };
+  const getText = async (url: string): Promise<string> => {
+    try {
+      const r = await fetch(url);
+      return r.ok ? await r.text() : '';
+    } catch {
+      return '';
+    }
+  };
+  const [fj, fe, logText] = await Promise.all([
+    getJson(`${dir}/forge-v1.json`),
+    getJson(`${dir}/final_evaluation.json`),
+    getText(`${dir}/run_log.jsonl`),
+  ]);
+  $('forgetitle').style.display = '';
+  if (!fj && !fe) {
+    $('forge').innerHTML = `<div class="ev">Não achei os artefatos da forja em ${esc(dir)}.</div>`;
+    return;
+  }
+  $('forge').innerHTML = forgeHtml(summarizeForge(fj, fe, parseRunLog(logText)), dir);
 }
 
 function canvases(): [HTMLCanvasElement, HTMLCanvasElement, HTMLCanvasElement] {
@@ -240,6 +325,9 @@ function renderDynamic(): void {
     ctx.textAlign = 'left';
     ctx.fillText(city.name, x + 6, y + 3);
   }
+  // Com reduced-motion não há loop de fluxo: a camada é redesenhada estática
+  // a cada render (frame/seleção/resize passam por aqui).
+  if (reducedMotion) drawFlow(false);
 }
 
 function buildRoutes(f: Frame): void {
@@ -261,14 +349,14 @@ function buildRoutes(f: Frame): void {
   }));
 }
 
-function flowTick(): void {
+function drawFlow(advance: boolean): void {
   const [, , flow] = canvases();
   const ctx = flow.getContext('2d');
   if (ctx && routes.length) {
     ctx.clearRect(0, 0, flow.width, flow.height);
     for (const p of particles) {
       const r = routes[p.route];
-      p.t = (p.t + p.speed) % 1;
+      if (advance) p.t = (p.t + p.speed) % 1;
       const mx = (r.from[0] + r.to[0]) / 2;
       const my = (r.from[1] + r.to[1]) / 2 - 24; // arco 2.5D seletivo (ADR-001 §3.1)
       const x = (1 - p.t) ** 2 * r.from[0] + 2 * (1 - p.t) * p.t * mx + p.t ** 2 * r.to[0];
@@ -279,6 +367,10 @@ function flowTick(): void {
       ctx.globalAlpha = 1;
     }
   }
+}
+
+function flowTick(): void {
+  drawFlow(true);
   requestAnimationFrame(flowTick);
 }
 
@@ -382,6 +474,24 @@ $('scrub').addEventListener('input', (e) => {
   idx = Number((e.target as HTMLInputElement).value);
   render();
 });
+$('file').addEventListener('change', (e) => {
+  // Seletor de arquivo avulso (VIS-07): carrega um frames.json local e aplica
+  // como corrida atual — mesmo caminho do ?run= (applyRun).
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      applyRun(parseRunData(JSON.parse(String(reader.result))));
+      $('err').style.display = 'none';
+    } catch (err) {
+      const el = $('err');
+      el.style.display = 'block';
+      el.textContent = `Arquivo inválido: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+  reader.readAsText(file);
+});
 $('feed').addEventListener('click', (e) => {
   const tick = tickFromFeedTarget(e.target);
   if (tick !== null) jumpToTick(tick);
@@ -416,7 +526,7 @@ window.addEventListener('resize', resize);
 loadAll().catch((err: Error) => {
   const el = $('err');
   el.style.display = 'block';
-  el.textContent = `Não foi possível carregar a corrida: ${err.message}. Verifique ?run= ou sirva a pasta com os dados (data/served/).`;
+  el.textContent = `Não foi possível carregar a corrida: ${err.message}. Verifique ?run=, sirva a pasta com os dados (data/served/) ou use o seletor de arquivo no topo.`;
 });
 
 // Salto por marco (VIS-07): agora é o mesmo caminho do clique no feed.
