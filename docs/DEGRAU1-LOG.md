@@ -435,3 +435,57 @@ motor segue bit-idêntico, como a suíte prova.
 (verificado por download) e `notebooks/kernel-metadata-b2.json`
 apontando para ele. O push do kernel é etapa posterior: o monitor
 da v1 fecha a coleta dela antes.
+
+## Torneio de políticas v1 — VEREDITO: INCONCLUSIVO (26/10/2026)
+
+Kernel `pascalcoimbra/ptq-torneio-de-politicas-v1` (versão 4,
+RUN_FINAL, bundle src4): CMA-ES em liga com 8.192 episódios de treino,
+128 de seleção e avaliação final em 64 blocos pareados nas seeds de
+teste travadas.
+
+- **ΔS (A1 − A0) = +0,075, IC95 [+0,034, +0,115]** — o intervalo é
+  todo positivo, mas o ΔS ficou abaixo da barra de PROVA do protocolo
+  pré-registrado: **VEREDITO: INCONCLUSIVO** (nem PROVA, nem MATA).
+- ΔS F2 = +0,054; ΔS choques = +0,054; portões de produto OK.
+- Braço A2 (IPPO focal) **não implementado** neste notebook —
+  PLANO_B inalcançável por construção; o veredito ficou entre
+  PROVA/MATA/INCONCLUSIVO.
+- Campeão A1: `evo:6a94b587701d` (S = 0,563 na seleção). Ecologia do
+  campeão mais viva que a A0: 130,0 vs 108,5 eventos/episódio,
+  4,375 vs 3,75 células de diversidade.
+- Genes que mais mudaram vs o genoma 0 (em passos do otimizador):
+  `size_ref` +3,74 (800 mil → 1,549 mi), `assembly_device_trigger`
+  +3,17 (25 → 88,4), `buffer_scale` +2,82 (1,0 → 2,13), `pick_noise`
+  +2,40 (0,10 → 0,29), `mines_coef` +2,17 (2,0 → 3,08),
+  `factory_need_default` −2,14 (2,6 mi → 1,315 mi), `dist_scale`
+  −2,00 (25 → 5,0, no piso), `buy_target_scale` −2,00 (1,0 → 0,20,
+  no piso), `factory_need_vertical` −1,97 (1,2 mi → 412,6 mil),
+  `reserve_base` −1,90 (1,5 mi → 549,8 mil).
+- Outputs em `results/torneio-v1/` (`genomas_campeoes.json` +
+  `stdout.txt`; `results/` é gitignored — só disco).
+
+## Veredito B3+B4a — APROVADO; mundo vivo CONGELADO (26/10/2026)
+
+Kernel `pascalcoimbra/ptq-veredito-b3-pais-e-importacoes` (versão 3,
+loader recursivo, bundle src5): 8 corridas pareadas B1 × B1+B3/B4a,
+seeds 42/7/11/23, 120 ticks.
+
+- **VEREDITO B3+B4a: APROVADO** — todos os portões pré-registrados.
+- Eventos salientes ON > OFF em 4/4 seeds: 182×138, 226×153,
+  231×155, 188×151.
+- Eventos políticos por corrida ON: 17, 25, 26, 22 (≥ 6 em 4/4);
+  90 no total — election 60, royalty_reform 13, subsidy 6,
+  judicial_halt 4, export_restriction 3, disaster 3, state_jv 3.
+- Royalties pagos: US$ 16,63 mi no total (3,40 / 5,27 / 4,61 /
+  3,34 mi por corrida ON).
+- Comércio externo ativo em 4/4: massa importada ≈ 251 mil
+  (81,4 / 58,1 / 66,6 / 44,8 mil por corrida) e valor exportado
+  US$ 922,9 mi (191,3 / 294,0 / 279,5 / 158,1 mi).
+- Ledger fecha em 8/8 corridas, incluindo a conta externo; 8/8
+  empresas vivas e 0 falências em todas; amplitude mediana de
+  preços ON 2,35–4,00 vs OFF 3,81–4,00.
+- Com B1 (mercado vivo), B2 (equipamentos) e B3+B4a (país/política +
+  importações) aprovados, **as mecânicas do mundo vivo estão
+  CONGELADAS** — a Fase 5 (núcleo nativo Rust/PyO3) está liberada.
+- Outputs em `results/veredito-b3/` (`veredito-b3.json` +
+  `stdout.txt`; só disco).
