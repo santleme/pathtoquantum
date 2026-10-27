@@ -13,7 +13,8 @@
     "bench": "node scripts/bench.mjs",
     "anchors": "node scripts/check-anchors.mjs",
     "measure": "node scripts/measure-bundle.mjs",
-    "predev": "node scripts/build-geo.mjs && node scripts/sync-data.mjs"
+    "predev": "node scripts/build-geo.mjs && node scripts/sync-data.mjs",
+    "gen:favicon": "python3 scripts/build-favicon.py"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

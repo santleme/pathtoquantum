@@ -1,4 +1,4 @@
-# viewer-next — Path to Quantum (F0+F1+F2+F3+F4)
+# viewer-next — Path to Quantum (F0+F1+F2+F3+F4+F5)
 
 App Vite + TypeScript (sem framework) da camada visual nova. O viewer legado em
 `../viewer/` continua intocado e abrindo corridas antigas. Stack: `docs/adr/ADR-001-stack-visual.md`;
@@ -148,10 +148,47 @@ geografia inalterada. Longe do teto: nenhuma troca de stack se impõe.
   Testes: `npm test` (primeiros-por-elo, tick 0, derivação Sankey com frame
   real e com frame degradado sem `prices`/`stocks`).
 
-## Fora desta fatia (F5–F6 da spec)
+## F5 — Entrega pública (VIS-09, branch `viewer/wow-v2-fatias`)
 
-README/lockup/favicon do repo (F5) · acessibilidade/responsivo/screenshots
-e o portão final de regressão (F6).
+- **Lockup no header:** marca + **Path to Quantum** + a tagline vigente do
+  README ("Eight autonomous AI companies. One real Earth…"). A marca é
+  derivada da capa (abaixo), não arte nova; `<title>` e `h1` já diziam Path to
+  Quantum desde a F0/F1 e nenhuma superfície visível usa "Mundo Autônomo"
+  (grep zero em `src/` + `index.html`). O lockup do README do repo (capa +
+  título + tagline) foi entregue na vitrine (PR #23) — aqui fecha a parte do
+  viewer. Meta social/OG: a spec não a pede no VIS-09 (só limita o peso de
+  derivados), então **não** foi inventada.
+- **Favicon derivado da capa:** `scripts/build-favicon.py` (reproduzível,
+  offline, Pillow) recorta de `assets/cover.webp` o quadrado centrado no
+  reator "quantum core" — o centro visual da arte — e gera em `public/`:
+  `favicon.ico` (16/32/48), `favicon-16.png`, `favicon-32.png`,
+  `ptq-mark-64.png` (a marca do lockup) e `apple-touch-icon.png` (180×180,
+  quantizado para paleta adaptativa só para caber no teto). Todos **< 50 KB**
+  (733 B – 29,9 KB), como manda a VIS-09; referenciados no `index.html`.
+  Regenerar: `python3 scripts/build-favicon.py`.
+- **Legenda viva da lente** (`src/legend.ts`, função pura frame+lente →
+  itens; `main.ts` só injeta): substitui a legenda fixa de símbolos por —
+  empresas **presentes no frame**, com a cor do frame e nome (empresa que sai
+  do frame sai da legenda; falida/selecionada marcadas em texto); símbolos do
+  mapa (◆ depósito com contagem do frame, ● cidade-mercado com contagem do
+  world_data, ◉ seleção); segmentos de elo com a escala de estágios; e os
+  selos da crônica por tier, derivados de `KIND_META` (a mesma taxonomia do
+  feed). Lente "em breve"/desconhecida não inventa camada: a legenda segue a
+  da Empresas com nota explícita. Mudar de frame/lente/seleção re-renderiza a
+  legenda junto (via `renderBoard`).
+- Testes: `npm test` — 8 novos de legenda (frame real com cor exata do frame,
+  troca de frame, seleção/falida em texto, símbolos/elos/tiers, lente em
+  breve/desconhecida, frame degradado sem empresas/depósitos/preços).
+- Bundle: JS 20,4 KB gzip medidos pelo script da casa; o total "APP" do
+  `measure` sobe para 74,8 KB porque o script soma os arquivos estáticos
+  novos de `public/` (favicon/marca, ~53 KB somados) — eles **não** são
+  bundle JS, são servidos sob demanda, e mesmo o total passa o teto de
+  180 KB com folga. Geografia inalterada (114,1 KB bruto / 40,0 KB gzip).
+
+## Fora desta fatia (F6 da spec)
+
+Acessibilidade/responsivo fino, robustez ampliada, screenshots e o portão
+final de regressão `?run=`/`?compare=`/`?forge=` (F6).
 
 **VIS-07 — o que ainda se cumpre via viewer legado:** o seletor de arquivo
 avulso, o `?compare=` e o `?forge=` seguem só no legado (`../viewer/`, intocado).
