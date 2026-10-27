@@ -206,15 +206,19 @@ def test_route_seconds_accumulate_on_success(llm, monkeypatch):
 
 
 def test_route_seconds_accumulate_on_failure(llm, monkeypatch):
-    ticks = iter([3.0, 4.25])
+    # Pós-sonda pré-voo: a cadeia NVIDIA tem primário + fallback, e
+    # ambos falham aqui (transporte fixo 500) — cada tentativa mede
+    # o próprio tempo, e o erro final continua sendo MutationError.
+    ticks = iter([3.0, 4.25, 5.0, 6.5])
     monkeypatch.setattr(llm, "_perf", lambda: next(ticks))
     mut = llm.LLMMutator(
         keys={"nvidia": "k-nv", "gemini": None, "groq": None},
         transport=_FixedTransport((500, "boom")))
     with pytest.raises(llm.MutationError):
         mut.mutate(SEED, random.Random(0), None)
-    # mesmo falhando, o tempo da rota ficou registrado (é o tempo
-    # que some em retries/backoff nas corridas reais)
+    # mesmo falhando, o tempo de cada rota ficou registrado (é o
+    # tempo que some em retries/backoff nas corridas reais)
     assert mut.stats["route_seconds"] == {
-        "nvidia/qwen/qwen3-coder-480b-a35b-instruct": 1.25}
+        "nvidia/qwen/qwen3-coder-480b-a35b-instruct": 1.25,
+        "nvidia/openai/gpt-oss-120b": 1.5}
     assert mut.stats["failures"] == 1

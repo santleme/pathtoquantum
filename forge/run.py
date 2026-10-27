@@ -773,8 +773,34 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--threshold", type=float, default=CASCADE_THRESHOLD)
     ap.add_argument("--no-final", action="store_true",
                     help="pula a avaliação cega (ensaio)")
+    ap.add_argument("--probe-only", action="store_true",
+                    help="sonda pré-voo pós-V8: 1 chamada pequena por "
+                    "rota de LLM e veredito PASS/FAIL, sem corrida, "
+                    "sem torneio, sem tocar nas seeds de teste")
     ap.add_argument("--final-processes", type=int, default=4)
     args = ap.parse_args(argv[1:])
+    if args.probe_only:
+        if args.mutator != "llm":
+            print("FORGE-PROBE: FAIL — probe-only só vale para o "
+                  "mutador llm")
+            return 2
+        try:
+            mutator = build_mutator("llm")
+        except Exception as exc:
+            if type(exc).__name__ == "NoKeysError":
+                print("FORGE-V1: BLOQUEADO — secrets ausentes")
+                return 3
+            raise
+        results = mutator.probe_routes()
+        llm_mod = _load_sibling("forge_llm_mutator", "llm_mutator.py")
+        print(llm_mod.format_probe_report(results))
+        if llm_mod.probe_gate(results):
+            print("FORGE-PROBE: PASS — pelo menos uma rota viva; "
+                  "a corrida pode largar")
+            return 0
+        print("FORGE-PROBE: FAIL — nenhuma rota viva; abortar "
+              "antes da corrida, não depois de 300 iterações")
+        return 2
     try:
         summary = run_forge(iterations=args.iterations, seed=args.seed,
                             out_dir=args.out, mutator_kind=args.mutator,

@@ -249,3 +249,56 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   diárias gratuitas; (4) usar a build instrumentada
   (`forja/instrumentacao-tempo`) para o log já nascer com tempos
   por fase e por rota.
+
+## Correção pré-relançamento V9 — sonda pré-voo (ciclo operador, 27/10/2026 ~20h)
+
+- **Fatia**: branch `forja/sonda-pre-voo` (base
+  `forja/instrumentacao-tempo` + veredito V8 trazido por cherry-pick
+  de 09ba1d1, que faltava nessa base). Cobre as correções (1), (2)
+  e (4) da auditoria da V8; a (3) vira regra de lançamento abaixo.
+- **O que mudou** (sem tocar em cascata, seeds de teste, avaliador,
+  guarda, prompts de mutação ou protocolo de veredito):
+  - `forge/llm_mutator.py`: fallback NVIDIA `openai/gpt-oss-120b`
+    logo após o primário na cadeia (ID confirmado na tabela de
+    modelos suportados da NVIDIA, GPT-OSS-120B); `LLMClient.chat`
+    aceita `max_tokens`; `LLMMutator.probe_routes()` faz 1 chamada
+    de 32 tokens por rota (primário + fallback NVIDIA, par Gemini,
+    par Groq), sem levantar e sem contar em `stats['calls']`;
+    `probe_gate()` exige ≥1 rota viva; `format_probe_report()`
+    imprime OK/FAIL por rota com o status.
+  - `forge/run.py`: `--probe-only` — kernel de fumaça separado da
+    corrida: imprime o relatório e `FORGE-PROBE: PASS` (retorno 0)
+    ou `FORGE-PROBE: FAIL` (retorno 2, nenhuma rota viva) ou
+    `BLOQUEADO` (retorno 3, sem chaves). A corrida normal não muda
+    quando a flag está ausente.
+  - Testes: `tests/test_forge_probe.py` (9 novos, transporte
+    mockado por provedor+modelo): fallback NVIDIA após 404,
+    relatório da sonda reproduzindo a V8 em miniatura, payload de
+    32 tokens, sonda fora das stats de mutação, portão e os quatro
+    caminhos do `--probe-only` (PASS, FAIL, BLOQUEADO,
+    programmatic rejeitado); `tests/test_forge_timing.py`
+    atualizado para primário + fallback (route_seconds dos dois).
+- **Verificação estrutural**: suíte completa da branch verde
+  (**254 passed, 18 skipped**; sonda 9/9 após as correções das
+  ressalvas); revisão independente de 2 eixos APROVA COM RESSALVAS
+  nos dois eixos, sem bloqueio — ressalvas de código corrigidas
+  (cadeia única de rotas, portão/relatório usados pelo driver,
+  sonda sem escapar exceção, testes BLOQUEADO/programmatic);
+  limites restantes declarados abaixo.
+- **Regras de relançamento da V9 (não é lançamento neste ciclo)**:
+  (a) rodar o kernel de fumaça (`run.py --probe-only`) PRIMEIRO e
+  só largar a corrida com `FORGE-PROBE: PASS`; (b) não lançar no
+  mesmo dia de outra corrida sobre as mesmas cotas diárias — a V8
+  queimou a cota do dia 27/10, então a V9 espera a virada da cota;
+  (c) corridas longas rodam DE NOITE (regra do fundador pós-V8);
+  (d) a V9 usa esta build instrumentada + sonda.
+- **Limites declarados da sonda (revisão independente, sem
+  bloqueio)**: (i) a corrida normal NÃO é portada — o que impede
+  outra V8 é a regra (a) acima, procedural, não um portão dentro
+  de `run_forge` (mudar isso seria alterar o protocolo da corrida,
+  decisão do fundador); (ii) a sonda prova vivacidade, não mutação
+  utilizável — um modelo que devolva texto sem diff passa e ainda
+  assim salvaria zero mutações; (iii) PASS não garante cota para
+  300 iterações — a regra (b) continua valendo como regra de
+  lançamento. Hipótese da #6 segue ABERTA; nenhum veredito novo
+  neste ciclo.

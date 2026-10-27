@@ -63,6 +63,13 @@ GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
 NVIDIA_VOLUME_MODEL = "qwen/qwen3-coder-480b-a35b-instruct"   # rota principal (emenda 27/10, pós-429 da V7)
+# Fallback NVIDIA (correção pós-V8): a V8 deu HTTP 404 nas 300
+# chamadas do modelo primário — o ID não estava servido no NIM
+# hospedado naquela conta/naquele dia. O fallback é tentado na
+# mesma iteração, antes de cair para Gemini/Groq, e só vale se a
+# sonda pré-voo prová-lo vivo: ID confirmado na tabela de modelos
+# suportados da NVIDIA (docs.nvidia.com/nim, GPT-OSS-120B).
+NVIDIA_FALLBACK_MODELS = ("openai/gpt-oss-120b",)
 GEMINI_VOLUME_MODEL = "gemini-3-flash-preview"   # peso 0,8 — volume (emenda 27/10: 2.5-flash-lite dá 404 p/ esta chave)
 GEMINI_LEAP_MODEL = "gemini-3.5-flash"            # peso 0,2 — saltos (emenda 27/10: 2.5-pro idem; 3.1-pro-preview 429 na cota)
 GEMINI_LEAP_WEIGHT = 0.2
@@ -70,6 +77,32 @@ GROQ_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.8-27b")   # qwen3-32b não é 
 
 TEMPERATURE = 0.7
 MAX_TOKENS = 16000
+
+# Sonda pré-voo (correção pós-V8): 1 chamada pequena por rota, sem
+# mutação e sem torneio. Provar que o modelo existe e a chave vale
+# custa 32 tokens de saída; descobrir isso na iteração 300 custou
+# 5h09 de backoff na V8.
+PROBE_MAX_TOKENS = 32
+PROBE_MESSAGES = [{"role": "user",
+                   "content": "Reply with the single word OK."}]
+
+
+def probe_gate(results: list[dict]) -> bool:
+    """A corrida só pode largar se PELO MENOS UMA rota estiver viva.
+    Zero rotas vivas = abortar antes da primeira iteração, não depois
+    de 300 tentativas com backoff."""
+    return any(r.get("ok") for r in results)
+
+
+def format_probe_report(results: list[dict]) -> str:
+    lines = []
+    for r in results:
+        if r.get("ok"):
+            lines.append(f"OK {r['provider']}/{r['model']}")
+        else:
+            lines.append(f"FAIL {r['provider']}/{r['model']} — "
+                         f"{r.get('error', '')}")
+    return "\n".join(lines)
 TIMEOUT_S = 180
 MAX_CODE_LENGTH = 40000          # forge/config.yaml: max_code_length
 
@@ -253,9 +286,10 @@ class LLMClient:
         self.base = _PROVIDER_BASES[provider]
         self.transport = transport or _default_transport
 
-    def chat(self, model: str, messages: list[dict]) -> str:
+    def chat(self, model: str, messages: list[dict],
+             max_tokens: int = MAX_TOKENS) -> str:
         payload = {"model": model, "messages": messages,
-                   "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS}
+                   "temperature": TEMPERATURE, "max_tokens": max_tokens}
         status, body = self.transport(
             self.base + "chat/completions",
             {"Authorization": f"Bearer {self._api_key}"},
@@ -395,6 +429,7 @@ class LLMMutator:
         chain: list[tuple[str, str]] = []
         if "nvidia" in self.clients:
             chain += [("nvidia", NVIDIA_VOLUME_MODEL)]
+            chain += [("nvidia", m) for m in NVIDIA_FALLBACK_MODELS]
         if "gemini" in self.clients:
             leap = rng.random() < GEMINI_LEAP_WEIGHT
             primary = GEMINI_LEAP_MODEL if leap else GEMINI_VOLUME_MODEL
@@ -416,6 +451,31 @@ class LLMMutator:
         finally:
             acc = self.stats.setdefault("route_seconds", {})
             acc[key] = acc.get(key, 0.0) + (_perf() - t0)
+
+    # -- sonda pré-voo ------------------------------------------------ #
+    def _probe_chain(self) -> list[tuple[str, str]]:
+        """A mesma cadeia de _route_chain, com RNG fixo: a sonda prova
+        cada modelo da cadeia real (a ordem volume/salto do Gemini
+        não importa aqui — os dois modelos entram de qualquer forma),
+        sem duplicar a lista de rotas em dois lugares."""
+        return self._route_chain(random.Random(0))
+
+    def probe_routes(self) -> list[dict]:
+        """1 chamada pequena por rota. Nunca levanta: rota morta — ou
+        transporte que levante qualquer exceção — vira registro FAIL
+        com o status, para o kernel de fumaça decidir. Não toca
+        stats['calls']: sonda não é mutação."""
+        results: list[dict] = []
+        for provider, model in self._probe_chain():
+            try:
+                self.clients[provider].chat(
+                    model, PROBE_MESSAGES, max_tokens=PROBE_MAX_TOKENS)
+                results.append({"provider": provider, "model": model,
+                                "ok": True, "error": ""})
+            except Exception as exc:
+                results.append({"provider": provider, "model": model,
+                                "ok": False, "error": str(exc)[:160]})
+        return results
 
     # -- a interface do loop ------------------------------------------ #
     def mutate(self, parent_source: str, rng: random.Random,
