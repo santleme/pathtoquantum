@@ -520,6 +520,7 @@ class NativeEngine:
 
     # -- snapshot / restore ---------------------------------------------
     def _restore_int_types(self, state: dict) -> None:
+        int_sizes: dict[str, float] = {}
         for d in state["deposits"]:
             fields = self._int_fields.get(d["name"])
             if not fields:
@@ -527,6 +528,22 @@ class NativeEngine:
             for f in fields:
                 if float(d[f]).is_integer():
                     d[f] = int(d[f])
+            if "size_t" in fields:
+                int_sizes[d["name"]] = float(d["size_t"])
+        # remaining: no motor Python ele nasce int (o size_t da fonte) e
+        # só vira float na primeira extração — a subtração só executa
+        # com crude > 0, logo remaining == size_t ⟺ depósito intacto.
+        # O núcleo guarda double e emitia float sempre: o hash JSON do
+        # state_dict divergia em qualquer corrida com depósito não
+        # extraído (no Kaggle, onde o bundle não leva data/, o mundo é
+        # o builtin e o Chuquicamata nunca é extraído no mundo vivo —
+        # diagnóstico diag-fase5, veredito v2 7/11). Normaliza pelo
+        # mesmo critério dos demais campos declarados int.
+        for name, size in int_sizes.items():
+            value = state["remaining"].get(name)
+            if isinstance(value, float) and value.is_integer() \
+                    and value == size:
+                state["remaining"][name] = int(value)
         for c in state["companies"]:
             for name, pair in c["knowledge"].items():
                 fields = self._int_fields.get(name)

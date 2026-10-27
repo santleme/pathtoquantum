@@ -99,6 +99,51 @@ def test_parity_mundo_vivo_n8_longo():
     assert_parity(120, seed=42, n_companies=8, **LIVING)
 
 
+def test_parity_mundo_vivo_builtin():
+    """O mundo BUILTIN (world_data=False) é o que o Kaggle roda: o
+    bundle leva só src/+pyproject, sem data/. Nele o Chuquicamata
+    nunca é extraído no mundo vivo — remaining fica int no Python e o
+    nativo emitia float, divergindo o hash (veredito v2: 7/11, com o
+    único diff em remaining.Chuquicamata; diagnóstico diag-fase5)."""
+    assert_parity(120, seed=42, n_companies=8, world_data=False, **LIVING)
+    assert_parity(48, seed=42, n_companies=8, world_data=False,
+                  country_params=FORCE, **LIVING)
+
+
+def test_remaining_intacto_eh_int_no_state_nativo():
+    """Depósito nunca extraído: remaining é int nos DOIS state_dict
+    (no Python nasce int do size_t; o nativo normaliza em
+    _restore_int_types). Depósito extraído: float nos dois."""
+    kw = dict(seed=42, n_companies=8, world_data=False, **LIVING)
+    py = Engine(**kw)
+    py.run(120)
+    nat = NativeEngine(**kw)
+    nat.run(120)
+    intactos = [n for n, v in py.state_dict()["remaining"].items()
+                if isinstance(v, int)]
+    assert intactos == ["Chuquicamata"]
+    assert isinstance(nat.state_dict()["remaining"]["Chuquicamata"], int)
+
+
+def test_restore_cruzado_vivo_builtin():
+    """Restore cruzado no mundo builtin + vivo: a perna nativa recebe
+    remaining int do Python e devolve int (o defeito do veredito v2
+    também reprovava o restore cruzado vivo)."""
+    kw = dict(seed=42, n_companies=8, world_data=False, **LIVING)
+    ref = Engine(**kw)
+    _steps(ref, 60)
+    a = Engine(**kw)
+    _steps(a, 30)
+    b = NativeEngine.from_state(a.state_dict())
+    _steps(b, 30)
+    assert _hash(b.state_dict()) == _hash(ref.state_dict())
+    c = NativeEngine(**kw)
+    _steps(c, 30)
+    d = Engine.from_state(c.state_dict())
+    _steps(d, 30)
+    assert _hash(d.state_dict()) == _hash(ref.state_dict())
+
+
 def test_parity_mundo_vivo_n100():
     assert_parity(48, seed=42, n_companies=100, **LIVING)
 
