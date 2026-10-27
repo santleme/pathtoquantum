@@ -1,4 +1,4 @@
-# viewer-next — Path to Quantum (F0+F1+F2+F3)
+# viewer-next — Path to Quantum (F0+F1+F2+F3+F4)
 
 App Vite + TypeScript (sem framework) da camada visual nova. O viewer legado em
 `../viewer/` continua intocado e abrindo corridas antigas. Stack: `docs/adr/ADR-001-stack-visual.md`;
@@ -43,12 +43,17 @@ Ressalva honesta do benchmark: roda em Node com ctx Canvas stub (conta comandos,
 rasteriza) — mede a lógica de frame (projeção + comandos), não o fps de um browser real.
 É o piso comparável/reproduzível; a margem (3,5× abaixo do teto) é a proteção.
 
-Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orientado a dados, feed da crônica F2, lentes e placar F3).
+Testes: `npm test` (Vitest — contratos §0, fitting da projeção, mundo orientado a dados, feed da crônica F2, lentes e placar F3, cadeia F4).
 
 Bundle após a F3 (re-medido com `npm run build && npm run measure`): app
 **16,9 KiB gzip** (teto 180 KiB) — cresceu 3,6 KiB sobre os 13,3 KiB da F0/F1
 pelos módulos novos (`lenses.ts` + `board.ts`) e pelo CSS do placar/lentes no
 `index.html`; geografia inalterada (114,1 KiB bruto / 40,0 KiB gzip).
+
+Bundle após a F4 (re-medido, mesmos comandos): app **21,9 KiB gzip**
+(22.430 B; teto 180 KiB) — Δ de **+5,0 KiB** sobre a F3, quase todo do
+`d3-sankey` (dependência prevista na ADR-001 §3.5) e do módulo `chain.ts`;
+geografia inalterada. Longe do teto: nenhuma troca de stack se impõe.
 
 ## F2 — A crônica vira show (VIS-03/VIS-04, branch `viewer/wow-v2-fatias`)
 
@@ -102,10 +107,51 @@ pelos módulos novos (`lenses.ts` + `board.ts`) e pelo CSS do placar/lentes no
   sem mover o frame, seleção não-cor, placar/âncora, falida por fixture,
   Δ, clique-no-mapa).
 
-## Fora desta fatia (F4–F6 da spec)
+## F4 — Barra/vista da cadeia (VIS-06, branch `viewer/wow-v2-fatias`)
 
-Barra da cadeia/Sankey (F4) · README/lockup/favicon do repo (F5) ·
-acessibilidade/responsivo/screenshots e o portão final de regressão (F6).
+- Barra sempre visível sob o header (`src/chain.ts`): os 5 elos nomeados
+  (extração, refino, componentes, dispositivos, SUPERCOMPUTADOR) como
+  segmentos; por elo, **quem dominou primeiro** — derivado dos eventos
+  `chain_link` (o elo sai do texto do evento, com fallback ordinal; ticks
+  reais, **sem interpolar frames**: o `stage` salta 0→4 entre frames anuais,
+  a barra ancora nos marcos, spec §9) — ou "ninguém ainda". Âncoras da
+  corrida servida: no tick 120, elos 1–4 dominados com **Órbita Systems
+  primeira nos ticks 1, 2, 5 e 8** e o elo 5 aberto; no tick 0, nenhum.
+- Progresso individual na mesma escala (`stage/5`): a função pura única é
+  `companyProgress`, que delega aos segmentos do placar da F3 — barra,
+  placar e painel de seleção leem a mesma verdade. Frame final: Vetor Sul,
+  Cuprum Andes, Nexo Indústrias e Órbita Systems em 4/5; Ferra Brasil e
+  PetroPlata em 2/5; Lítio Austral e Andina Prime em 0/5.
+- Vista-cadeia **Sankey** (aside): layout `d3-sankey` + render SVG próprio
+  (ADR-001 §3.5). **O que a largura representa, exatamente:** os artefatos
+  não trazem fluxo elo→elo, então a largura do link k→k+1 é uma derivação —
+  a soma das unidades das commodities de **saída** do elo k em poder de
+  empresas que já dominaram o elo k+1 (`stage > k`): o estoque "qualificado"
+  por progresso, não uma medição de transferência. Sem fluxo positivo
+  (tick 0), a vista cai em caixas iguais com a nota "sem fluxo entre elos
+  neste frame". Comércio entre empresas (cíclico) não entra — é DAG da
+  cadeia; comércio fica nos arcos do mapa. Ao lado do SVG, a **lista textual
+  equivalente** (estado de cada elo + estoque total do elo) cobre a
+  acessibilidade da vista.
+- Contexto de mercado na barra: preços (`prices` do frame) das commodities
+  do **elo mais alto em disputa** (o primeiro não dominado) — no frame final,
+  o supercomputador a US$ 1.200.000, **mostrado como está**: `device` e
+  `supercomputer` são constantes nesta corrida e a spec proíbe exigir
+  variação deles. Frame sem `prices` degrada para "preços indisponíveis
+  neste frame", sem erro (VIS-12); `stocks` ausente = 0.
+- Painel de seleção (F3) agora mostra os **estoques da empresa selecionada**
+  por commodity (rótulo legível + quantidade, maior primeiro) — `stocks`
+  deixou de ser dado morto. Ex.: selecionar a Órbita mostra copper_ore,
+  lithium, component, lithium_ore e copper do frame.
+- Âncoras: `npm run anchors` cobre também o VIS-06 (primeiros por elo,
+  tick 0 vazio, progresso final por empresa, preços constantes, stocks).
+  Testes: `npm test` (primeiros-por-elo, tick 0, derivação Sankey com frame
+  real e com frame degradado sem `prices`/`stocks`).
+
+## Fora desta fatia (F5–F6 da spec)
+
+README/lockup/favicon do repo (F5) · acessibilidade/responsivo/screenshots
+e o portão final de regressão (F6).
 
 **VIS-07 — o que ainda se cumpre via viewer legado:** o seletor de arquivo
 avulso, o `?compare=` e o `?forge=` seguem só no legado (`../viewer/`, intocado).
