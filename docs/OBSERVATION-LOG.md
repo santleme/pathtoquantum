@@ -310,3 +310,40 @@ escrita da guarda) foi aposentada. Nota viva: a corrida forge-v1
 nascem no contrato `decide(self, obs)`; programas antigos
 (assinatura legada ou canais v1) são rejeitados na carga com a
 explicação do contrato.
+
+## Revisão independente — ciclo do operador, 27/10/2026 (~02h, -03)
+
+Revisão da migração fechada (fatias 1–4) por agente que não escreveu
+o código, nos dois eixos do manifesto (padrões do repo × fidelidade
+à SPEC §4), em worktree próprio sobre `obs/guarda-v2` @ 1931b7b.
+Árvore principal intacta (branch `noite/prep-smoke-forja`).
+
+- **Suíte reproduzida do zero: 240/240** (109,8 s, `PYTHONPATH=src`,
+  venv do repo) — mesmo número declarado no fechamento da fatia 4.
+- **Goldens intactos:** `tests/test_golden.py` idêntico à `main`
+  local (`git diff` vazio); `test_native_parity.py` verde.
+- **Contrato declarativo:** `decide(self, obs)` em
+  `policies.py`, `engine.py` e `forge/seed_policy.py`; a semente
+  da forja tem **zero acesso `engine.*`** no fonte.
+- **Canais v1 aposentados provados:** `test_guard_rejects_cheats`
+  + `test_guard_rejects_retired_v1_channels` verdes — os 6
+  variantes (comp._offers/_buys/knowledge, engine.claimed_by,
+  apelido contaminado, deleção) são rejeitados pela guarda
+  (`RETIRED_SUBSCRIPT_OWNERS` em `program.py`); o subconjunto
+  forge/observation/golden/intentions soma 76 testes verdes.
+- **Ressalva de escopo (não é falha):** `claimed_by`/`_offers`/
+  `_buys`/`god_events` ainda aparecem dentro do `Engine` e do
+  executor (`observation.py`) — são estado interno do motor e
+  da execução de intenções validadas, não canais da política.
+  O que a política-programa pode tocar é o que a guarda veta,
+  e isso está vetado.
+- **Veredito da revisão: APROVADA para revisão do fundador.**
+  Não houve merge (regra do modo autônomo). PR draft limpo
+  contra a `main` remota ainda não é possível: a `main` local
+  está 62 commits à frente e 8 atrás da remota (históricos
+  divergentes — é a issue H do lote pendente, decisão do
+  fundador). Um PR aberto agora carregaria o atraso inteiro
+  junto com a guarda v2. Próximo passo da fila: decisão H;
+  depois, PR draft só da guarda v2; depois, a corrida
+  forge-v1 (#6), que ainda depende da chave LLM do fundador
+  (decisão do mutador, `docs/PESQUISA-MUTADOR-FORGE-V1.md`).
