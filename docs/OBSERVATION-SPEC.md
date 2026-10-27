@@ -213,17 +213,53 @@ Decisões de formato, com o critério **menor ruptura + bit-exatidão**:
   assinatura antiga rejeitada no loader); `act.probe` revela e
   registra em `knowledge` com o mesmo custo/fluxo de hoje.
 
-### Fatia 2 — Observation serializável + séries públicas novas
+### Fatia 2 — Observation serializável + séries públicas (FEITA)
 
 - `Observation.to_snapshot() -> dict` (valores, sem referências
   vivas): o formato que um wrapper de episódio p/ IPPO consome —
-  pré-requisito do braço A2 sem quebrar o fog-of-war.
-- Decisão própria (com spec): expor séries públicas do mercado vivo
-  (âncoras/regimes) e placar público de rivais (o que a crônica já
-  narra) — só o que for público por desenho.
+  pré-requisito do braço A2 sem quebrar o fog-of-war. Só `me` +
+  `world`: `act`/`rng` são capacidades (verbos, sorteio), não
+  dados — um snapshot que os carregasse vazaria o motor em si.
+  Leitura pura: não chama verbos, não sorteia e não materializa o
+  estado preguiçoso do B2 (o `equip` de instalação intacta entra
+  com os valores canônicos que a primeira leitura criaria).
+- **Decisão das séries públicas** (fundamentada no desenho que o
+  motor já declara em código):
+  - **ENTRA — `world.anchors`**: a âncora p* corrente por
+    commodity. O motor a chama de "série pública" (comentário do
+    `result()` e do bloco B1) e os frames a publicam. Só com
+    `market_v2`; sem ele, mapping vazio.
+  - **ENTRA — `world.price_history`**: a janela de preços já
+    publicados por commodity (o "anel público de 24 meses" que o
+    motor mantém em `_price_ring`, copiado no instante da
+    decisão). Histórico de preço público é público.
+  - **FORA — o regime do B1**: o frame do motor é explícito —
+    "regime (só Deus vê — as empresas inferem do preço)". Expor a
+    série entregaria a variável oculta da cadeia de Markov;
+    inferir do preço é o jogo desenhado. (As *mudanças* de regime
+    são narradas na crônica quando acontecem; expor a crônica como
+    superfície é decisão separada, não desta fatia.)
+  - **FORA — `cover`, `_demand_ema`, `_fair_noise`,
+    `_record_state`**: internos do modelo do B1; `cover`, em
+    particular, é agregado dos estoques de TODAS as empresas
+    (estado privado somado) — só aparece, arredondado, no frame de
+    Deus do `result()`, nunca num canal de decisão.
+  - **FORA — placar ao vivo de rivais**: hoje NÃO existe canal de
+    decisão que exponha caixa/elo/estoques de rival; o que a
+    crônica narra (marcos de elo, resumos de era, falências,
+    aquisições) é narrativa em eventos, não série consultável.
+    Um `world.scoreboard` contínuo criaria informação pública
+    nova e mudaria o jogo informacional — não vira público nesta
+    fatia. Caminho registrado para fatia futura, se um dia fizer
+    sentido: uma view do *registro já publicado* (valores como
+    narrados, nos ticks narrados), nunca o estado vivo.
 - Aceitação: snapshot == valores da view viva no mesmo tick;
   episódio com política lendo snapshot reproduz o episódio da view
-  (para a heurística, nos blocos de treino do torneio).
+  (para a heurística, nos blocos de treino do torneio). **Provada**
+  em `tests/test_observation.py`: fidelidade campo a campo,
+  round-trip JSON, vazamento zero (chaves proibidas + sentinelas),
+  replay bit-idêntico fotografando toda decisão (clássico e mundo
+  vivo completo) e janela == anel público do motor.
 
 ### Fatia 3 — Intentions declarativas (o esboço literal do SDD §6.2)
 

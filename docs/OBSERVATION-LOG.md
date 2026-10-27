@@ -94,12 +94,58 @@ declarativas do SDD §6.2 são a fatia 3); `rng` do esboço vira
 `obs.rng` forward-only e segue banido no fonte de programas
 (sorteio, para código evoluído, é serviço dos métodos herdados).
 
+## 2026-10-27 — Fatia 2 entregue
+
+**`Observation.to_snapshot()`** (em `src/mundo/observation.py`,
+com `to_snapshot()` por view e o conversor estrito `_jsonify`):
+fotografia da decisão em valores JSON puros — `{"me": …, "world":
+…}`, round-trip `json.dumps`/`loads` idêntico provado em teste.
+Captura a focal inteira (identidade, caixa, traits, stocks,
+knowledge sondado, claims ordenados, ferramentas, sede,
+instalações com `equip` quando o B2 está ligado, elo derivado) e o
+mundo público inteiro (tick, flags, preços, depósitos/cidades/
+países públicos, capex por país, parâmetros do B2). `act`/`rng`
+ficam fora por desenho: são capacidades, não observação.
+
+Leitura **pura**, com duas provas fortes:
+
+- **Replay bit-idêntico**: uma política que fotografa TODA decisão
+  (e serializa em JSON) antes de decidir reproduz o episódio sem
+  fotografia com `state_dict()` idêntico — no clássico e no mundo
+  vivo completo (B1+B3+B2), 36 ticks.
+- **Sem escrita escondida**: o `equip` de uma instalação nunca
+  lida entra no snapshot com os valores canônicos iniciais SEM
+  materializar o dict preguiçoso no mundo (teste confere o dict
+  cru antes/depois) — fotografar não escreve.
+
+**Vazamento zero no snapshot** (teste dedicado): varredura
+recursiva de chaves e valores com sentinelas — grade de depósito
+não sondado (0,4242424242), fator de evento de Deus futuro
+(7,777001), tick de evento político forçado (987654) e caixa de
+rival (123.456.789) não aparecem em nível nenhum; chaves proibidas
+(`grade`, `size_t`, `god_events`, `force_events`, `regime`,
+`demand_ema`, `cover`, `remaining`, `companies`, …) idem.
+
+**A decisão das séries públicas** (detalhe e fundamentação na
+SPEC §4): entram **`world.anchors`** (a âncora p* — "série
+pública" nas palavras do próprio motor) e **`world.price_history`**
+(o "anel público de 24 meses" de preços, copiado por decisão;
+teste: janela == anel do motor, limitada à janela dos parâmetros,
+cópia que não envelhece com o mundo). Ficam fora o **regime**
+("só Deus vê — as empresas inferem do preço", no frame do motor),
+`cover`/EMA/ruído (internos; `cover` é agregado de estoques
+privados) e qualquer **placar ao vivo de rivais** (não existe
+canal de decisão que o exponha hoje; a crônica narrar marcos não
+é uma série — virar série mudaria o jogo informacional).
+
+**O mundo não mudou**: suíte **221/221** (214 + 7 novos, todos em
+`tests/test_observation.py`); `test_golden.py` sem edição, os 4
+hashes da Fase 1 intactos; S da semente e episódio bit-idêntico
+da fatia 1 sem edição e verdes. A heurística não lê as séries
+novas (só as expõe) — quem prova é a suíte inteira + o replay.
+
 ## O que falta (fatias seguintes da SPEC §4)
 
-- **Fatia 2**: `Observation.to_snapshot()` serializável + decisão
-  sobre expor séries públicas do mercado vivo e placar público de
-  rivais — é o pré-requisito do braço IPPO (A2) sem quebrar o
-  fog-of-war.
 - **Fatia 3**: `Intentions` declarativas como retorno do `decide`
   (replay de decisões; re-provar goldens ou regravar com decisão
   explícita).
