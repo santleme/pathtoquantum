@@ -1,10 +1,11 @@
-// Viewer-next (F0+F1+F2+F3) — "A Terra de verdade" + "A crônica vira show" +
+// Viewer-next (F0+F1+F2+F3+F4) — "A Terra de verdade" + "A crônica vira show" +
 // lente Empresas e placar-ranking: base cartográfica real (Natural Earth),
 // entidades orientadas a dados, replay compatível com ?run=, feed da crônica por
 // kind/company com hierarquia, destaque de novo e clique-para-saltar
 // (VIS-01/02/03/04/07), mecanismo de lentes com Empresas padrão, seleção por
-// canal não-cor e placar com posição/segmentos de elo/Δ de caixa (VIS-05/08).
-// A barra da cadeia (VIS-06) é a fatia F4.
+// canal não-cor e placar com posição/segmentos de elo/Δ de caixa (VIS-05/08) e
+// a barra/vista da cadeia (VIS-06): primeiros por elo dos `chain_link`, mercado
+// do elo em disputa, Sankey derivado de stocks/stage e estoques na seleção.
 import { feature } from 'topojson-client';
 import type { FeatureCollection } from 'geojson';
 import {
@@ -16,9 +17,10 @@ import {
   type RunData,
   type WorldData,
 } from './contracts';
-import { boardRowHtml, nearestCompanyId, rankCompanies } from './board';
+import { boardRowHtml, money, nearestCompanyId, rankCompanies } from './board';
+import { chainBarHtml, chainStateListHtml, sankeySvg, selectionProgressHtml, stocksListHtml } from './chain';
 import { cellToLonLat, citiesFromWorld, depositsFromFrame } from './entities';
-import { feedItemHtml, narrativeItems, newItemIndexes, tickFromFeedTarget } from './feed';
+import { esc, feedItemHtml, narrativeItems, newItemIndexes, tickFromFeedTarget } from './feed';
 import { DEFAULT_LENS_ID, emphasisAlpha, LENSES, resolveLensSelection } from './lenses';
 import { CanvasMapSurface, type MapSurface } from './mapsurface';
 import { resourceInfo } from './resources';
@@ -109,8 +111,41 @@ function render(): void {
   ($('scrub') as HTMLInputElement).value = String(idx);
   buildRoutes(f);
   renderDynamic();
+  renderChain(f);
   renderBoard(f);
+  renderSelection(f);
   renderFeed(f);
+}
+
+/**
+ * Barra da cadeia + vista Sankey (VIS-06): tudo derivado do frame atual e da
+ * crônica até o tick dele — primeiros por elo, mercado do elo em disputa e o
+ * fluxo derivado de stocks/stage, com a lista textual equivalente ao lado.
+ */
+function renderChain(f: Frame): void {
+  const colorByName = new Map(f.companies.map((c) => [c.name, c.color]));
+  $('chainbar').innerHTML = chainBarHtml(run.chronicle, f, colorByName);
+  $('sankey').innerHTML = sankeySvg(f) + chainStateListHtml(run.chronicle, f);
+}
+
+/**
+ * Painel de seleção (VIS-05/06): empresa selecionada com progresso na mesma
+ * escala da cadeia e os estoques do frame — `stocks` deixa de ser dado morto.
+ */
+function renderSelection(f: Frame): void {
+  const el = $('selpanel');
+  const c = selectedId === null ? null : (f.companies.find((co) => co.id === selectedId) ?? null);
+  if (!c) {
+    el.innerHTML =
+      '<p class="dim-note">clique numa empresa do placar ou numa instalação do mapa para inspecionar: progresso na cadeia e estoques do frame.</p>';
+    return;
+  }
+  const dead = c.alive ? '' : '<span class="tag tag-dead">† falida</span>';
+  el.innerHTML =
+    `<div class="selhead"><span class="dot" style="background:${esc(c.color)}"></span><b>${esc(c.name)}</b>${dead}</div>` +
+    `<div class="selmeta"><span class="stage">${esc(c.archetype)} · sede: ${esc(c.hq)}</span></div>` +
+    `<div class="selmeta">${selectionProgressHtml(c)} <span class="selcash">${money(c.cash)}</span></div>` +
+    stocksListHtml(c);
 }
 
 function renderDynamic(): void {
@@ -270,6 +305,7 @@ function setSelected(id: number | null): void {
   selectedId = selectedId !== null && id === selectedId ? null : id;
   renderDynamic();
   renderBoard(run.frames[idx]);
+  renderSelection(run.frames[idx]);
 }
 
 function renderBoard(f: Frame): void {
@@ -365,6 +401,7 @@ $('flow').addEventListener('click', (e) => {
       selectedId = null;
       renderDynamic();
       renderBoard(run.frames[idx]);
+      renderSelection(run.frames[idx]);
     }
   } else setSelected(id);
 });
