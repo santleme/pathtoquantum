@@ -48,10 +48,53 @@ class HeuristicPolicy(Policy):
     """A política heurística do v0: traços de personalidade parametrizam
     sondagem, capex, compras, vendas e uso de ferramentas. É a política
     padrão do Engine; o comportamento é idêntico ao ``_decide`` original.
+
+    As constantes de decisão vivem em ``PARAMS0`` (o genoma 0 do
+    protocolo de torneios, docs/ALGORITMOS-DECISAO.md): instanciar com
+    ``params`` sobrescreve genes individuais SEM mudar nenhuma regra —
+    com os defaults, o comportamento é bit-idêntico ao v0 (goldens).
     """
 
+    PARAMS0 = {
+        "reserve_base": 1_500_000.0,        # reserva de caixa (base)
+        "reserve_risk_span": 2_000_000.0,   # reserva extra por (1 - risk)
+        "mines_coef": 2.0,                  # minas desejadas = 1 + int(aggr * coef)
+        "dist_scale": 25.0,                 # escala de distância no score do depósito
+        "known_grade_base": 0.3,            # intercepto do peso do teor conhecido
+        "size_ref": 800_000.0,              # referência de tamanho conhecido (t)
+        "grade_thr_base": 0.62,             # limiar de teor p/ reivindicar (base)
+        "grade_thr_risk": 0.25,             # limiar cai com o risk
+        "refinery_raw_trigger": 350.0,      # bruto acumulado p/ erguer refinaria
+        "factory_need_vertical": 1_200_000.0,   # valor em metais p/ fábrica (vertical alto)
+        "factory_need_default": 2_600_000.0,    # idem (vertical baixo)
+        "plant_component_trigger": 40.0,    # componentes em estoque p/ planta
+        "assembly_device_trigger": 25.0,    # dispositivos em estoque p/ montadora
+        "assembly_cash_cushion": 6_000_000.0,   # colchão de caixa p/ montadora
+        "buy_budget_frac": 0.5,             # fração do gastável alocada a compras
+        "buy_target_scale": 1.0,            # escala global dos alvos de compra
+        "buffer_scale": 1.0,                # escala global dos buffers de estoque
+        "insta_prob_scale": 1.0,            # escala da prob. do InstaSim
+        "zap_prob_scale": 1.0,              # escala da prob. do ZapSim
+        "pick_noise": 0.1,                  # meia-largura do ruído de preferência
+    }
+
+    # Fallback de CLASSE: subclasses que sobrescrevem __init__ sem
+    # chamar super() (ex.: políticas de teste que embrulham a
+    # heurística) leem os defaults daqui; instâncias normais ganham o
+    # próprio dict em __init__, que sombreia este.
+    p = PARAMS0
+
+    def __init__(self, params: dict | None = None):
+        self.p = dict(self.PARAMS0)
+        if params:
+            unknown = set(params) - set(self.PARAMS0)
+            if unknown:
+                raise ValueError(f"genes desconhecidos: {sorted(unknown)}")
+            self.p.update(params)
+
     def reserve(self, comp: Company) -> float:
-        return 1_500_000.0 + (1.0 - comp.traits["risk"]) * 2_000_000.0
+        return self.p["reserve_base"] \
+            + (1.0 - comp.traits["risk"]) * self.p["reserve_risk_span"]
 
     def decide(self, engine, comp: Company) -> None:
         rng = engine.rng
@@ -61,7 +104,7 @@ class HeuristicPolicy(Policy):
 
         # 1) Mineração: sondar / reivindicar / construir mina
         mines = [f for f in comp.facilities.values() if f["kind"] == "mine"]
-        desired_mines = 1 + int(t["aggression"] * 2.0)
+        desired_mines = 1 + int(t["aggression"] * self.p["mines_coef"])
         if len(mines) < desired_mines:
             target = self.pick_deposit(engine, comp)
             if target is not None:
@@ -80,7 +123,8 @@ class HeuristicPolicy(Policy):
                                                f"teor decepcionante.", comp.name)
                 elif not capex_done:
                     grade, _ = known
-                    threshold = 0.62 - t["risk"] * 0.25
+                    threshold = self.p["grade_thr_base"] \
+                        - t["risk"] * self.p["grade_thr_risk"]
                     cost = chain.CLAIM_COST + chain.FACILITIES["mine"]["cost"]
                     if grade >= threshold and spendable > cost:
                         if target.cell not in comp.claimed:
@@ -124,12 +168,14 @@ class HeuristicPolicy(Policy):
             if d.name in mined:
                 continue
             dist = abs(d.lat - hq.lat) + abs(d.lon - hq.lon)
-            score = chain.BASE_PRICES[d.resource] / (1.0 + dist / 25.0)
+            score = chain.BASE_PRICES[d.resource] \
+                / (1.0 + dist / self.p["dist_scale"])
             known = comp.knowledge.get(d.name)
             if known:
-                score *= 0.3 + known[0]           # teor conhecido pesa
-                score *= min(1.5, known[1] / 800_000.0)
-            score *= engine.rng.uniform(0.9, 1.1)   # gosto/erro humano
+                score *= self.p["known_grade_base"] + known[0]  # teor pesa
+                score *= min(1.5, known[1] / self.p["size_ref"])
+            noise = self.p["pick_noise"]
+            score *= engine.rng.uniform(1.0 - noise, 1.0 + noise)  # gosto/erro
             if score > best_score:
                 best, best_score = d, score
         return best
@@ -151,27 +197,31 @@ class HeuristicPolicy(Policy):
             return True
 
         raw_total = sum(comp.stocks[r] for r in chain.RAW_TO_REFINED)
-        if comp.has("mine") and not comp.has("refinery") and raw_total > 350 \
+        if comp.has("mine") and not comp.has("refinery") \
+                and raw_total > self.p["refinery_raw_trigger"] \
                 and affordable("refinery"):
             return build("refinery",
                          f"{comp.name} inaugura sua refinaria em {comp.hq_city} — "
                          f"o refino agora é dentro de casa.")
         metal_value = sum(comp.stocks[m] * chain.BASE_PRICES[m]
                           for m in ("copper", "lithium", "iron"))
-        need = 1_200_000.0 if t["vertical"] > 0.7 else 2_600_000.0
+        need = self.p["factory_need_vertical"] if t["vertical"] > 0.7 \
+            else self.p["factory_need_default"]
         if comp.has("refinery") and not comp.has("factory") \
                 and metal_value > need and affordable("factory"):
             return build("factory",
                          f"{comp.name} ergue uma fábrica de componentes em "
                          f"{comp.hq_city}.")
         if comp.has("factory") and not comp.has("plant") \
-                and comp.stocks["component"] > 40 and affordable("plant"):
+                and comp.stocks["component"] > self.p["plant_component_trigger"] \
+                and affordable("plant"):
             return build("plant",
                          f"{comp.name} abre sua planta de dispositivos — "
                          f"a cadeia sobe mais um elo.")
         if comp.has("plant") and not comp.has("assembly") \
-                and comp.stocks["device"] > 25 \
-                and comp.cash > chain.FACILITIES["assembly"]["cost"] + 6_000_000:
+                and comp.stocks["device"] > self.p["assembly_device_trigger"] \
+                and comp.cash > chain.FACILITIES["assembly"]["cost"] \
+                + self.p["assembly_cash_cushion"]:
             return build("assembly",
                          f"{comp.name} anuncia a montadora de SUPERCOMPUTADORES. "
                          f"O topo da cadeia está ao alcance.")
@@ -181,17 +231,18 @@ class HeuristicPolicy(Policy):
         spendable = comp.cash - self.reserve(comp)
         if spendable <= 0:
             return
+        scale = self.p["buy_target_scale"]
         wants = {}
         if comp.has("factory"):
             if comp.stocks["copper"] < 4.0:
-                wants["copper"] = 6.0
+                wants["copper"] = 6.0 * scale
             if comp.stocks["lithium"] < 1.5:
-                wants["lithium"] = 2.5
+                wants["lithium"] = 2.5 * scale
         if comp.has("plant") and comp.stocks["component"] < 12:
-            wants["component"] = 20.0
+            wants["component"] = 20.0 * scale
         if comp.has("assembly") and comp.stocks["device"] < 10:
-            wants["device"] = 12.0
-        budget = spendable * 0.5
+            wants["device"] = 12.0 * scale
+        budget = spendable * self.p["buy_budget_frac"]
         for c, q in wants.items():
             cost = q * engine.prices[c]
             if cost <= budget:
@@ -200,7 +251,7 @@ class HeuristicPolicy(Policy):
 
     def buffer(self, comp: Company, commodity: str) -> float:
         """Quanto manter em estoque para o próprio jusante."""
-        v = 0.5 + comp.traits["vertical"]
+        v = (0.5 + comp.traits["vertical"]) * self.p["buffer_scale"]
         if commodity in chain.RAW_TO_REFINED and comp.has("refinery"):
             return 220.0 * v
         if commodity in ("copper", "lithium") and comp.has("factory"):
@@ -224,6 +275,7 @@ class HeuristicPolicy(Policy):
         tools = comp.tools
         if not tools.insta_active(engine.tick) \
                 and engine.rng.random() < t["marketing"] * 0.45 \
+                * self.p["insta_prob_scale"] \
                 and comp.cash - self.reserve(comp) > insta_campaign_cost():
             engine._spend(comp, insta_campaign_cost(), reason="tools")
             tools.insta_until = engine.tick + INSTA_DURATION_TICKS
@@ -234,6 +286,7 @@ class HeuristicPolicy(Policy):
                                f"seus dispositivos.", comp.name)
         if not tools.zap_active(engine.tick) and comp.stocks["device"] > 20 \
                 and engine.rng.random() < t["marketing"] * 0.35 \
+                * self.p["zap_prob_scale"] \
                 and comp.cash - self.reserve(comp) > zap_campaign_cost():
             engine._spend(comp, zap_campaign_cost(), reason="tools")
             tools.zap_until = engine.tick + ZAP_DURATION_TICKS

@@ -32,12 +32,19 @@ class EpisodeSpec:
     market_params: dict | None = None   # override de parâmetros do B1
     god_events: tuple | None = None     # tupla de dicts (congelada)
     keep_frames: bool = False           # frames pesam; treino não precisa
+    policy_specs: tuple | None = None   # PolicySpec por cid (torneios);
+                                        # None = política padrão do motor
 
 
 def run_episode(spec: EpisodeSpec) -> dict:
     """Roda UM episódio e devolve o resultado compacto (picklável)."""
+    policy = None
+    if spec.policy_specs is not None:
+        from .policies import build_router
+        policy = build_router(spec.policy_specs)
     eng = Engine(seed=spec.seed, n_companies=spec.n_companies,
                  god_events=list(spec.god_events) if spec.god_events else None,
+                 policy=policy,
                  world_data=spec.world_data, market_v2=spec.market_v2,
                  market_params=spec.market_params)
     res = eng.run(spec.ticks)
@@ -50,6 +57,12 @@ def run_episode(spec: EpisodeSpec) -> dict:
         "initial_cash": eng.initial_cash,
         "money_in": eng.money_in,
         "money_out": eng.money_out,
+        # insumos da fitness de torneio: supercomputadores POR empresa
+        # e o mapa cid -> (nome, arquétipo) na ordem do motor
+        "super_by_cid": {int(k): float(v)
+                         for k, v in eng._super_by_cid.items()},
+        "companies": [{"cid": c.cid, "name": c.name,
+                       "archetype": c.archetype} for c in eng.companies],
     }
     if spec.keep_frames:
         out["frames"] = res["frames"]
