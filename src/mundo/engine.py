@@ -14,8 +14,11 @@ from dataclasses import asdict
 from . import chain
 from .chronicle import Chronicle, Event, sim_date
 from .companies import Company, make_companies
-from .tools_sim import (INSTA_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
-                        insta_campaign_cost, zap_campaign_cost)
+from .tools_sim import (INSTA_DURATION_TICKS, LOJA_DEMAND_WEIGHT,
+                        LOJA_DURATION_TICKS, LOJA_FEE_PCT, VID_DEMAND_WEIGHT,
+                        VID_DURATION_TICKS, ZAP_DURATION_TICKS, ToolEffects,
+                        insta_campaign_cost, loja_store_cost,
+                        vid_campaign_cost, zap_campaign_cost)
 from .world import CITIES, DEPOSITS, City, Deposit
 
 START_YEAR = 2027
@@ -234,6 +237,29 @@ class HeuristicPolicy(Policy):
             engine.chronicle.add(engine.tick, "tool",
                                f"{comp.name} abre canal de vendas no ZapSim "
                                f"(US$ {zap_campaign_cost():,.0f}).", comp.name)
+        # VidSim: ferramenta de elo alto — quem já vende dispositivo e tem
+        # marketing forte produz vídeo (decisão por limiar, sem sorteio:
+        # é capex de marca, não impulso). Custa ~7x o InstaSim e dura 2x.
+        if not tools.vid_active(engine.tick) and t["marketing"] >= 0.6 \
+                and comp.stocks["device"] > 10 \
+                and comp.cash - self.reserve(comp) > vid_campaign_cost():
+            engine._spend(comp, vid_campaign_cost(), reason="tools")
+            tools.vid_until = engine.tick + VID_DURATION_TICKS
+            engine.chronicle.add(engine.tick, "tool",
+                               f"{comp.name} estreia campanha em vídeo no "
+                               f"VidSim (US$ {vid_campaign_cost():,.0f}) para "
+                               f"empurrar seus produtos de elo alto.", comp.name)
+        # LojaSim: quem tem dispositivo parado abre prateleira no
+        # marketplace e aceita pagar a comissão sobre o que vender.
+        if not tools.loja_active(engine.tick) \
+                and comp.stocks["device"] >= 15 \
+                and comp.cash - self.reserve(comp) > loja_store_cost():
+            engine._spend(comp, loja_store_cost(), reason="tools")
+            tools.loja_until = engine.tick + LOJA_DURATION_TICKS
+            engine.chronicle.add(engine.tick, "tool",
+                               f"{comp.name} abre loja no LojaSim "
+                               f"(US$ {loja_store_cost():,.0f} + "
+                               f"{LOJA_FEE_PCT:.0%} por venda).", comp.name)
 
 
 
@@ -261,7 +287,9 @@ def _company_state(c: Company) -> dict:
         "knowledge": {k: [g, s] for k, (g, s) in c.knowledge.items()},
         "tools": {"insta_until": c.tools.insta_until,
                   "insta_strength": c.tools.insta_strength,
-                  "zap_until": c.tools.zap_until},
+                  "zap_until": c.tools.zap_until,
+                  "vid_until": c.tools.vid_until,
+                  "loja_until": c.tools.loja_until},
         "alive": c.alive, "founded_tick": c.founded_tick, "fac_n": c._fac_n,
     }
 
@@ -278,7 +306,13 @@ def _company_from_state(cs: dict) -> Company:
                        for fid, f in cs["facilities"].items()}
     comp.claimed = {tuple(cell) for cell in cs["claimed"]}
     comp.knowledge = {k: (v[0], v[1]) for k, v in cs["knowledge"].items()}
-    comp.tools = ToolEffects(**cs["tools"])
+    _tools = cs["tools"]
+    comp.tools = ToolEffects(
+        insta_until=_tools["insta_until"],
+        insta_strength=_tools["insta_strength"],
+        zap_until=_tools["zap_until"],
+        vid_until=_tools.get("vid_until", -1),      # states do v0 não têm
+        loja_until=_tools.get("loja_until", -1))
     comp.alive = cs["alive"]
     comp.founded_tick = cs["founded_tick"]
     comp._fac_n = cs["fac_n"]
@@ -581,8 +615,14 @@ class Engine:
                     if seller.tools.insta_active(self.tick) \
                             and commodity == "device":
                         w *= 2.2
+                    if seller.tools.vid_active(self.tick) \
+                            and commodity in ("device", "supercomputer"):
+                        w *= VID_DEMAND_WEIGHT
                     if seller.tools.zap_active(self.tick):
                         w *= 1.3
+                    if seller.tools.loja_active(self.tick) \
+                            and commodity == "device":
+                        w *= LOJA_DEMAND_WEIGHT
                     weights[seller.cid] = w
                 wsum = sum(weights.values())
                 for seller, _ in offers:
@@ -598,6 +638,14 @@ class Engine:
                     self.money_in += qty * price
                     self.ledger_mass[commodity]["sold_external"] += qty
                     offered_left[seller.cid] -= qty
+                    # LojaSim: a venda passou pela prateleira do marketplace
+                    # — a comissão é sink (vai ao "mundo"), via ledger/flows.
+                    if commodity == "device" \
+                            and seller.tools.loja_active(self.tick):
+                        fee = qty * price * LOJA_FEE_PCT
+                        seller.cash -= fee
+                        self.money_out += fee
+                        self._flow(seller.cid, "spend_tools", -fee)
             # 3) ajuste de preço por desequilíbrio
             demand = internal_demand + city_q
             ratio = (demand - total_supply) / max(demand, total_supply, 1.0)
