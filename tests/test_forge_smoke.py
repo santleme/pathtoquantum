@@ -70,7 +70,7 @@ def test_mutator_preserves_structure(mut):
     assert "# EVOLVE-BLOCK-START" in out
     assert "# EVOLVE-BLOCK-END" in out
     assert "class EvolvedPolicy(HeuristicPolicy):" in out
-    assert "def decide(self, engine, comp):" in out
+    assert "def decide(self, obs):" in out
 
 
 def test_mutator_param_override_takes_effect(mut, tmp_path):

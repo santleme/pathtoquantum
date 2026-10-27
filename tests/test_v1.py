@@ -182,10 +182,11 @@ class CapexSuicidePolicy(HeuristicPolicy):
     """Estoura o caixa da empresa 0 construindo (reason='build') — a
     falência nasce dentro do log e a causa tem que sair 'capex'."""
 
-    def decide(self, engine, comp):
-        super().decide(engine, comp)
-        if comp.cid == 0 and engine.tick >= 10 and comp.facilities:
-            engine._spend(comp, comp.cash + 5_000_000.0, reason="build")
+    def decide(self, obs):
+        super().decide(obs)
+        if obs.me.cid == 0 and obs.world.tick >= 10 \
+                and obs.me.facilities:
+            obs.act.spend(obs.me.cash + 5_000_000.0, reason="build")
 
 
 def test_bankruptcy_with_probable_cause():

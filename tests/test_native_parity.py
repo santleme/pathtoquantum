@@ -193,7 +193,7 @@ def test_politica_customizada_recusada():
     from mundo.engine import Policy
 
     class Noop(Policy):
-        def decide(self, engine, comp):
+        def decide(self, obs):
             pass
 
     with pytest.raises(ValueError):

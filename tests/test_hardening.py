@@ -18,7 +18,7 @@ from mundo.engine import Engine, HeuristicPolicy, Policy
 class NullPolicy(Policy):
     """Política que nunca age: nenhuma empresa constrói nem vende."""
 
-    def decide(self, engine, comp):
+    def decide(self, obs):
         pass
 
 
@@ -28,9 +28,9 @@ class RecordingPolicy(HeuristicPolicy):
     def __init__(self):
         self.calls = 0
 
-    def decide(self, engine, comp):
+    def decide(self, obs):
         self.calls += 1
-        super().decide(engine, comp)
+        super().decide(obs)
 
 
 def test_policy_swap_keeps_engine_intact():
@@ -95,18 +95,20 @@ def test_replay_with_god_events_and_discovery():
 
 class SuicidalPolicy(HeuristicPolicy):
     """Quebra a primeira empresa com instalações — gastando pelo
-    engine._spend, ou seja, a falência nasce DENTRO do log de eventos
-    (nada de mutar estado por fora: o replay precisa enxergar tudo)."""
+    verbo spend da Observation (o _spend do motor), ou seja, a
+    falência nasce DENTRO do log de eventos (nada de mutar estado
+    por fora: o replay precisa enxergar tudo)."""
 
     def __init__(self):
         self.target = None
 
-    def decide(self, engine, comp):
-        super().decide(engine, comp)
-        if self.target is None and engine.tick >= 10 and comp.facilities:
-            self.target = comp.name
-        if comp.name == self.target and comp.alive:
-            engine._spend(comp, comp.cash + 1_000_000.0, reason="test")
+    def decide(self, obs):
+        super().decide(obs)
+        if self.target is None and obs.world.tick >= 10 \
+                and obs.me.facilities:
+            self.target = obs.me.name
+        if obs.me.name == self.target and obs.me.alive:
+            obs.act.spend(obs.me.cash + 1_000_000.0, reason="test")
 
 
 def test_replay_after_bankruptcy_and_acquisition():
