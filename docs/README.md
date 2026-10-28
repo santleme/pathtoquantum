@@ -17,6 +17,7 @@
 | [`DEGRAU1-LOG.md`](DEGRAU1-LOG.md) | Log | Histórico | Diário do Degrau 1: fases, vereditos Kaggle e o diagnóstico de paridade. |
 | [`OBSERVATION-LOG.md`](OBSERVATION-LOG.md) | Log | Histórico | Diário da guarda v2, fatia a fatia, até o fechamento da migração. |
 | [`FORGE-LOG.md`](FORGE-LOG.md) | Log | Vivo (atualizado por corrida) | Vereditos e artefatos das corridas da forja (#6). |
+| [`EPICA-V3-OUTROS-DEUSES-ERA2.md`](EPICA-V3-OUTROS-DEUSES-ERA2.md) | Decomposição | Horizonte (registro, épica #17) | O destino v3 destrinchado em frentes, portões e perguntas ao fundador; nenhuma fatia antes do veredito da forja (#6) e da chamada dele. |
 | [`adr/`](adr/README.md) | Decisões | Vivo | ADRs curtos das decisões que ainda mandam + o índice (incl. ADR-001, da frente visual). |
 
 Fora de `docs/`: [`../DESIGN.md`](../DESIGN.md) é o manifesto/visão do fundador (raiz, vigente) e [`../notebooks/README.md`](../notebooks/README.md) classifica os notebooks Kaggle. Registros de processo que **não** são documentos do projeto: os JSONs de geração de mídia em `assets/` foram removidos do versionamento em commit próprio (a arte final é só `assets/cover.webp`).
