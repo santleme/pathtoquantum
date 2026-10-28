@@ -11,16 +11,21 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "bench": "node scripts/bench.mjs",
+    "anchors": "node scripts/check-anchors.mjs",
     "measure": "node scripts/measure-bundle.mjs",
-    "predev": "node scripts/build-geo.mjs && node scripts/sync-data.mjs"
+    "predev": "node scripts/build-geo.mjs && node scripts/sync-data.mjs",
+    "gen:favicon": "python3 scripts/build-favicon.py",
+    "contrast": "node scripts/check-contrast.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",
+    "d3-sankey": "^0.12.3",
     "topojson-client": "^3.1.0",
     "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@types/d3-geo": "^3.1.1",
+    "@types/d3-sankey": "^0.11.2",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^26.6.5",
     "@types/topojson-client": "^3.1.5",
