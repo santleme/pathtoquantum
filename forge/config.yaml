@@ -18,6 +18,28 @@ enforce_evolve_blocks: true
 # --no-probe-gate ou run_forge(probe_gate=False).
 probe_gate: true
 
+# Porte ShinkaEvolve (issue #21, estudo docs/ESTUDO-SHINKA-FORJA.md)
+# em staging: técnicas 1 (pais) e 2 (novidade Tier 1) atrás de
+# flags, DESLIGADAS por padrão — ativação só pós-veredito da
+# corrida #6, por decisão do fundador. Com as flags desligadas, a
+# corrida é bit-idêntica à atual (seleção, RNG e resultados).
+# Pais: weighted = σ(λ·(F−mediana)) × 1/(1+N filhos gerados), a
+# configuração validada do paper (§3.1); power_law = rank^(−α) é a
+# alternativa do repo (o paper não fixa α; 1,0 é o default dele).
+# Substitui o 70/20/10 fixo do driver quando ligada.
+parent_sampling: "off"
+parent_lambda: 10.0
+parent_alpha: 1.0
+# Novidade Tier 1 com proxy LOCAL (sem embedding externo): AST
+# normalizado do EVOLVE-BLOCK + similaridade difflib contra a
+# subpopulação da ilha. O limiar é da escala DESTE proxy — NÃO é
+# o 0,95 do paper (embedding); calibrar com a taxa de rejeição
+# logada nas primeiras corridas com a flag ligada. O Tier 2 (juiz
+# LLM) e o bandit de modelos NÃO foram portados (adiados pelo
+# estudo; o bandit exige ≥2 rotas vivas provadas).
+novelty_filter: false
+novelty_threshold: 0.98
+
 # Ensemble barato com teto executado por max_iterations: primário
 # rápido/barato na maioria das mutações, forte como tempero.
 # Trocar os modelos por qualquer endpoint OpenAI-compatible.
