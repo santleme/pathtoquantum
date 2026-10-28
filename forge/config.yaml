@@ -11,7 +11,8 @@ enforce_evolve_blocks: true
 # Portão da sonda DENTRO da corrida (emenda pós-V8, branch
 # forja/portao-sonda): run_forge sonda as rotas antes da iteração
 # 0 e se recusa a largar (FORGE-GATE: BLOCKED) sem
-# nvidia/openai/gpt-oss-120b vivo + ≥1 rota Gemini viva; as rotas
+# nvidia/nvidia/nemotron-3-ultra-550b-a55b vivo + ≥1 rota Gemini
+# viva; as rotas
 # mortas são podadas da cadeia da corrida. Default LIGADO.
 # Desligar — só para smokes/testes antigos: forge/run.py
 # --no-probe-gate ou run_forge(probe_gate=False).
@@ -28,15 +29,16 @@ probe_gate: true
 # O driver da casa (forge/run.py + forge/llm_mutator.py) usa estes
 # mesmos modelos/pesos. Cadeia de rotas (emenda de provedor de
 # 27/10/2026, pós-429 da Version 7; cadeia revista na emenda
-# pós-V8): NVIDIA NIM na frente (deepseek-v4-flash + fallback
-# openai/gpt-oss-120b), depois o par Gemini, depois o par Groq
+# pós-V8; IDs revistos na emenda de catálogo de 28/10/2026):
+# NVIDIA NIM na frente (deepseek-v4.1-flash + fallback
+# nemotron-3-ultra-550b-a55b), depois o par Gemini, depois o par Groq
 # como fallback final — o ensemble roda com qualquer subconjunto
 # das três chaves. O transporte tem ritmo
 # (FORGE_LLM_MIN_INTERVAL_S, default 1,5s) + retry com
 # backoff 5s/20s em 429/5xx.
 llm:
   main_provider: "nvidia"
-  main_model: "deepseek-ai/deepseek-v4-flash"
+  main_model: "deepseek-ai/deepseek-v4.1-flash"
   main_api_base: "https://integrate.api.nvidia.com/v1"
   primary_model: "gemini-3-flash-preview"
   primary_model_weight: 0.8

@@ -50,7 +50,8 @@ infraestrutura, fora do protocolo: nenhum prompt, cascata,
 threshold, seed, RNG ou scoring muda): com o mutador LLM,
 ``run_forge`` sonda as rotas ANTES da iteração 0 e se recusa a
 largar (``FORGE-GATE: BLOCKED`` + motivos, zero iterações
-consumidas) sem ``nvidia/openai/gpt-oss-120b`` vivo + ≥1 rota
+consumidas) sem ``nvidia/nvidia/nemotron-3-ultra-550b-a55b``
+vivo + ≥1 rota
 Gemini viva (critério em ``llm_mutator.race_gate``; Groq é
 reforço e não conta para o mínimo). As rotas mortas na sonda são
 podadas da cadeia da corrida, com o fato em
@@ -524,7 +525,8 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                 log(f"FORGE-GATE: BLOCKED — {'; '.join(reasons)}")
                 return summary
             log("FORGE-GATE: PASS — fundação viva "
-                "(nvidia/openai/gpt-oss-120b + ≥1 rota Gemini); "
+                "(nvidia/nvidia/nemotron-3-ultra-550b-a55b "
+                "+ ≥1 rota Gemini); "
                 "corrida liberada")
         else:
             summary["probe_gate"] = {

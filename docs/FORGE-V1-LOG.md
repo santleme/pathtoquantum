@@ -405,3 +405,58 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   captura alargada ×2, portão em run_forge ×4) e IDs atualizados
   em test_forge_llm/test_forge_probe/test_forge_timing — nenhum
   teste referencia os IDs mortos.
+
+## Emenda de catálogo NIM — âncora nova do portão (28/10/2026)
+
+A fumaça do bundle src15 reprovou pelo critério forte e a sonda
+ampla de 28/10 mostrou o motivo: o catálogo do NIM hospedado
+**rotacionou** — IDs que constavam da referência oficial de
+23/10/2026 morreram em dias. A sonda com chamadas reais é a
+única verdade; esta emenda troca a leitura de catálogo por
+**enumeração viva** e substitui os IDs mortos pelos vivos
+medidos. Infraestrutura de novo: nenhum prompt, cascata,
+threshold, seed, RNG ou scoring muda.
+
+- **Método**: `GET /v1/models` com a chave do projeto (kernels
+  de sonda v12/v13 sobre o bundle src16) → **85 modelos** no
+  catálogo servido; presença conferida por ID + chamada real
+  (chat completion) nos candidatos.
+- **Mortos / ausentes do catálogo (410 Gone, com a data de
+  morte devolvida pelo NIM)**: `deepseek-ai/deepseek-v4-pro` e
+  `deepseek-ai/deepseek-v4-flash` (07/08/2026),
+  `openai/gpt-oss-120b` (03/09/2026), `kimi-k3` (15/10/2026),
+  `qwen2.5-coder` (12/05/2026) — ou seja, **os dois IDs NVIDIA
+  da cadeia pós-V8** (`deepseek-v4-flash` no volume e
+  `gpt-oss-120b` no fallback/âncora) já não existiam quando a
+  fumaça src15 rodou. `z-ai/glm-5.3` sem resposta (3 timeouts
+  de 180s) e `moonshotai/kimi-k2.6` 404 completam o quadro.
+- **Vivos medidos com chamada real (kernel v13)**:
+  `nvidia/nemotron-3-ultra-550b-a55b` — 200 em **8,0s** (o mais
+  rápido); `deepseek-ai/deepseek-v4.1-flash` — 200 em 67,3s
+  (provável cold start; latência morna a confirmar na fumaça
+  src17); `poolside/laguna-xs-2.1` — 200 em 80,8s;
+  `openai/gpt-oss-20b` — 200 em 167,5s (lento).
+- **Substituições (branch `forja/portao-sonda`)**:
+  `NVIDIA_VOLUME_MODEL`: `deepseek-v4-flash` →
+  `deepseek-ai/deepseek-v4.1-flash` (sucessor direto, presente
+  no catálogo e vivo). `NVIDIA_FALLBACK_MODELS`:
+  `openai/gpt-oss-120b` → `nvidia/nemotron-3-ultra-550b-a55b`
+  — como `GATE_REQUIRED_ROUTE` deriva da constante do
+  fallback, **a âncora do portão muda junto**: sai o
+  gpt-oss-120b (EOL 03/09/2026) e entra o nemotron-ultra (vivo
+  e o mais rápido medido). O CRITÉRIO não muda: fundação NVIDIA
+  viva (a rota do fallback) + ≥1 rota Gemini viva; Groq segue
+  reforço e não conta para o mínimo. IDs espelhados em
+  `forge/config.yaml` e nos testes
+  (test_forge_gate/test_forge_llm/test_forge_probe/
+  test_forge_timing); a rota Groq `openai/gpt-oss-120b`
+  PERMANECE — o ID morreu na NVIDIA, não na Groq.
+- **`PROBE_MAX_TOKENS` 32 → 512**: a 32 tokens, modelos com
+  reasoning devolviam 200 sem texto (o Groq gpt-oss-120b só
+  respondeu a 512 na sonda) — o teto antigo reprovava na sonda
+  justamente modelos vivos.
+- **Verificação estrutural**: suíte completa verde
+  (**292 passed**) após a emenda.
+- **Próximo passo**: bundle **src17** sobre esta branch +
+  fumaça `--probe-only`; corrida V9 só com o critério forte
+  PASS (nemotron-ultra OK + ≥1 Gemini OK).

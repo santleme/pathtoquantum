@@ -191,11 +191,11 @@ def test_nvidia_only_route(llm):
     child, desc = mut.mutate(SEED, random.Random(1), None)
     assert REPLACE_LINE in child
     assert desc.startswith(
-        "llm[nvidia/deepseek-ai/deepseek-v4-flash]")
+        "llm[nvidia/deepseek-ai/deepseek-v4.1-flash]")
     assert all("integrate.api.nvidia.com" in u
                for u, _ in transport.calls)
     assert mut.stats["calls"] == {
-        "nvidia/deepseek-ai/deepseek-v4-flash": 1}
+        "nvidia/deepseek-ai/deepseek-v4.1-flash": 1}
 
 
 def test_nvidia_first_then_gemini(llm):

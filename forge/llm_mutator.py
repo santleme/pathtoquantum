@@ -11,12 +11,16 @@ MESMA interface do mutador programático do smoke —
 - **NVIDIA NIM (principal)**, pela EMENDA DE PROVEDOR de 27/10/2026:
   a Version 7 morreu por HTTP 429 nas quatro rotas antigas (rajada
   sem ritmo nem backoff; ver docs/FORGE-V1-LOG.md). A NVIDIA entra
-  na frente da cadeia com ``deepseek-ai/deepseek-v4-flash`` no
-  volume e ``openai/gpt-oss-120b`` de fallback (chave gratuita
-  `nvapi-…` de build.nvidia.com, limite ~40 RPM — daí o
-  ritmo/backoff no transporte, ver abaixo). O primário anterior
-  foi REMOVIDO na emenda pós-V8: ausente da referência oficial do
-  NIM hospedado, o 404 dele era definitivo, não transitório;
+  na frente da cadeia com ``deepseek-ai/deepseek-v4.1-flash`` no
+  volume e ``nvidia/nemotron-3-ultra-550b-a55b`` de fallback
+  (chave gratuita `nvapi-…` de build.nvidia.com, limite ~40 RPM
+  — daí o ritmo/backoff no transporte, ver abaixo). Os IDs
+  anteriores foram substituídos na emenda de catálogo de
+  28/10/2026: a enumeração viva (GET /v1/models com a chave do
+  projeto, kernels v12/v13) provou que ``deepseek-v4-flash`` e
+  ``openai/gpt-oss-120b`` NÃO constam do catálogo servido (410
+  Gone) e mediu os substitutos com chamadas reais — ver
+  docs/FORGE-V1-LOG.md, seção da emenda de catálogo;
 - **Gemini**, no desenho da config validado pela pesquisa
   (docs/PESQUISA-MUTADOR-FORGE-V1.md §4), com a EMENDA DE MODELOS de
   27/10/2026: a família Gemini 2.5 retorna 404 para a chave do
@@ -68,12 +72,15 @@ NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
-NVIDIA_VOLUME_MODEL = "deepseek-ai/deepseek-v4-flash"   # rota principal (emenda pós-V8: confirmado na referência oficial do NIM hospedado, 23/10/2026; o primário anterior saiu da cadeia — 404 definitivo, não transitório)
-# Fallback NVIDIA (correção pós-V8): tentado na mesma iteração,
-# antes de cair para Gemini/Groq, e é a fundação do portão da
-# corrida (race_gate): ID confirmado na referência oficial de
-# modelos suportados da NVIDIA (GPT-OSS-120B).
-NVIDIA_FALLBACK_MODELS = ("openai/gpt-oss-120b",)
+NVIDIA_VOLUME_MODEL = "deepseek-ai/deepseek-v4.1-flash"   # rota principal (emenda de catálogo 28/10/2026: o v4-flash anterior saiu do catálogo servido — 410 Gone medido na sonda ampla; o v4.1-flash consta dos 85 modelos do GET /v1/models e respondeu 200 em chamada real, kernel v13)
+# Fallback NVIDIA (correção pós-V8; ID substituído na emenda de
+# catálogo de 28/10/2026): tentado na mesma iteração, antes de
+# cair para Gemini/Groq, e é a fundação do portão da corrida
+# (race_gate). O âncora anterior (openai/gpt-oss-120b) teve EOL
+# em 03/09/2026 e sumiu do catálogo (410 Gone); o substituto foi
+# o modelo vivo MAIS RÁPIDO medido com chamada real na
+# enumeração de 28/10/2026: 200 em 8,0s (kernel v13).
+NVIDIA_FALLBACK_MODELS = ("nvidia/nemotron-3-ultra-550b-a55b",)
 GEMINI_VOLUME_MODEL = "gemini-3-flash-preview"   # peso 0,8 — volume (emenda 27/10: 2.5-flash-lite dá 404 p/ esta chave)
 GEMINI_LEAP_MODEL = "gemini-3.8-flash"            # peso 0,2 — saltos (emenda pós-V8: o salto anterior foi depreciado em 08/10/2026 e roteado silenciosamente p/ o 3.6; troca silenciosa é inaceitável no pré-registro)
 GEMINI_LEAP_WEIGHT = 0.2
@@ -84,9 +91,12 @@ MAX_TOKENS = 16000
 
 # Sonda pré-voo (correção pós-V8): 1 chamada pequena por rota, sem
 # mutação e sem torneio. Provar que o modelo existe e a chave vale
-# custa 32 tokens de saída; descobrir isso na iteração 300 custou
-# 5h09 de backoff na V8.
-PROBE_MAX_TOKENS = 32
+# custa 512 tokens de saída (emenda de catálogo 28/10/2026: com 32
+# tokens, modelos com reasoning devolviam 200 SEM texto — o Groq
+# gpt-oss-120b só respondeu a 512; teto pequeno demais punia
+# justamente os modelos que a sonda devia aprovar); descobrir
+# rota morta só na iteração 300 custou 5h09 de backoff na V8.
+PROBE_MAX_TOKENS = 512
 PROBE_MESSAGES = [{"role": "user",
                    "content": "Reply with the single word OK."}]
 
@@ -112,8 +122,9 @@ def format_probe_report(results: list[dict]) -> str:
 # Portão DA CORRIDA (emenda pós-V8, branch forja/portao-sonda):
 # mais forte que o probe_gate do kernel de fumaça (≥1 rota viva
 # basta para o RELATÓRIO da fumaça; para LARGAR 300 iterações, não).
-# A fundação mínima da V9 é o fallback NVIDIA confirmado na
-# referência oficial (openai/gpt-oss-120b) + redundância Gemini.
+# A fundação mínima da V9 é o fallback NVIDIA provado vivo na
+# enumeração de catálogo de 28/10/2026
+# (nvidia/nemotron-3-ultra-550b-a55b) + redundância Gemini.
 # Groq é reforço, não fundação (free tier volátil) — não conta
 # para o mínimo.
 GATE_REQUIRED_ROUTE = ("nvidia", NVIDIA_FALLBACK_MODELS[0])
@@ -124,7 +135,8 @@ def race_gate(results: list[dict]) -> tuple[bool, list[str]]:
     """(pode largar?, motivos de bloqueio) do portão interno.
 
     PASS exige: (a) a rota obrigatória
-    ``nvidia/openai/gpt-oss-120b`` viva; (b) ≥1 rota Gemini viva.
+    ``nvidia/nvidia/nemotron-3-ultra-550b-a55b`` viva; (b) ≥1
+    rota Gemini viva.
     Bloqueando, devolve cada motivo nomeado — é o texto que o
     ``FORGE-GATE: BLOCKED`` do driver imprime.
     """

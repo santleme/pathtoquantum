@@ -37,7 +37,8 @@ SEARCH_LINE = '        desired_mines = 1 + int(t["aggression"] ' \
 REPLACE_LINE = '        desired_mines = 2 + int(t["aggression"] ' \
                '* self.p["mines_coef"])'
 
-DEEPSEEK = "deepseek-ai/deepseek-v4-flash"
+DEEPSEEK = "deepseek-ai/deepseek-v4.1-flash"
+NEMOTRON = "nvidia/nemotron-3-ultra-550b-a55b"
 GPT_OSS = "openai/gpt-oss-120b"
 GEM_VOLUME = "gemini-3-flash-preview"
 GEM_LEAP = "gemini-3.8-flash"
@@ -100,7 +101,7 @@ class RouteTransport:
 
 def _ok_routes(**overrides):
     routes = {("nvidia", DEEPSEEK): (200, _body(_diff_response())),
-              ("nvidia", GPT_OSS): (200, _body(_diff_response())),
+              ("nvidia", NEMOTRON): (200, _body(_diff_response())),
               ("gemini", GEM_VOLUME): (200, _body(_diff_response())),
               ("gemini", GEM_LEAP): (200, _body(_diff_response())),
               ("groq", GPT_OSS): (200, _body(_diff_response())),
@@ -117,13 +118,13 @@ def test_chain_locks_the_six_routes(llm):
                          transport=RouteTransport(_ok_routes()))
     chain = mut._route_chain(random.Random(0))
     assert chain[0] == ("nvidia", DEEPSEEK)      # principal NVIDIA
-    assert chain[1] == ("nvidia", GPT_OSS)       # fallback NVIDIA
-    assert set(chain) == {("nvidia", DEEPSEEK), ("nvidia", GPT_OSS),
+    assert chain[1] == ("nvidia", NEMOTRON)       # fallback NVIDIA
+    assert set(chain) == {("nvidia", DEEPSEEK), ("nvidia", NEMOTRON),
                           ("gemini", GEM_VOLUME), ("gemini", GEM_LEAP),
                           ("groq", GPT_OSS), ("groq", GROQ_QWEN)}
     assert len(chain) == 6
     assert llm.NVIDIA_VOLUME_MODEL == DEEPSEEK
-    assert llm.NVIDIA_FALLBACK_MODELS == (GPT_OSS,)
+    assert llm.NVIDIA_FALLBACK_MODELS == (NEMOTRON,)
     assert llm.GEMINI_VOLUME_MODEL == GEM_VOLUME
     assert llm.GEMINI_LEAP_MODEL == GEM_LEAP
     assert llm.GROQ_MODELS == (GPT_OSS, GROQ_QWEN)
@@ -211,7 +212,7 @@ def _res(provider, model, ok, error=""):
 
 def test_race_gate_passes_on_foundation(llm):
     results = [_res("nvidia", DEEPSEEK, False, "HTTP 404"),
-               _res("nvidia", GPT_OSS, True),
+               _res("nvidia", NEMOTRON, True),
                _res("gemini", GEM_VOLUME, True),
                _res("gemini", GEM_LEAP, False, "HTTP 429"),
                _res("groq", GPT_OSS, False, "HTTP 404"),
@@ -222,7 +223,7 @@ def test_race_gate_passes_on_foundation(llm):
 
 
 def test_race_gate_groq_does_not_count_as_foundation(llm):
-    results = [_res("nvidia", GPT_OSS, True),
+    results = [_res("nvidia", NEMOTRON, True),
                _res("gemini", GEM_VOLUME, False, "HTTP 429"),
                _res("gemini", GEM_LEAP, False, "HTTP 429"),
                _res("groq", GPT_OSS, True),
@@ -235,15 +236,15 @@ def test_race_gate_groq_does_not_count_as_foundation(llm):
 def test_race_gate_requires_the_fallback_route_specifically(llm):
     # primário NVIDIA vivo NÃO basta: a fundação é o fallback
     results = [_res("nvidia", DEEPSEEK, True),
-               _res("nvidia", GPT_OSS, False, "HTTP 404"),
+               _res("nvidia", NEMOTRON, False, "HTTP 404"),
                _res("gemini", GEM_VOLUME, True)]
     passed, reasons = llm.race_gate(results)
     assert passed is False
-    assert any(GPT_OSS in r for r in reasons)
+    assert any(NEMOTRON in r for r in reasons)
 
 
 def test_race_gate_blocks_with_named_reasons_when_all_dead(llm):
-    results = [_res("nvidia", GPT_OSS, False, "HTTP 404"),
+    results = [_res("nvidia", NEMOTRON, False, "HTTP 404"),
                _res("gemini", GEM_VOLUME, False, "HTTP 429")]
     passed, reasons = llm.race_gate(results)
     assert passed is False
@@ -257,7 +258,7 @@ def test_prune_removes_dead_routes_from_chain(llm):
     mut = llm.LLMMutator(keys=dict(ALL_KEYS),
                          transport=RouteTransport(_ok_routes()))
     results = [_res("nvidia", DEEPSEEK, True),
-               _res("nvidia", GPT_OSS, True),
+               _res("nvidia", NEMOTRON, True),
                _res("gemini", GEM_VOLUME, False, "HTTP 429"),
                _res("gemini", GEM_LEAP, True),
                _res("groq", GPT_OSS, True),
@@ -297,7 +298,7 @@ def test_weird_transport_exception_is_route_failure_not_escape(llm):
     mut = llm.LLMMutator(keys=dict(ALL_KEYS), transport=transport)
     child, desc = mut.mutate(SEED, random.Random(1), None)
     assert REPLACE_LINE in child
-    assert desc.startswith(f"llm[nvidia/{GPT_OSS}]")
+    assert desc.startswith(f"llm[nvidia/{NEMOTRON}]")
     assert mut.stats["failures"] == 0   # a iteração NÃO virou error
 
 
@@ -318,7 +319,7 @@ def test_all_routes_weird_exceptions_consolidate(llm):
 # ------------------------------------------------------------------ #
 _PASS_RESULTS = [
     _res("nvidia", DEEPSEEK, False, "HTTP 404"),
-    _res("nvidia", GPT_OSS, True),
+    _res("nvidia", NEMOTRON, True),
     _res("gemini", GEM_VOLUME, True),
     _res("gemini", GEM_LEAP, False, "HTTP 429"),
     _res("groq", GPT_OSS, False, "HTTP 404"),
@@ -326,7 +327,7 @@ _PASS_RESULTS = [
 ]
 _BLOCKED_RESULTS = [
     _res("nvidia", DEEPSEEK, False, "HTTP 404"),
-    _res("nvidia", GPT_OSS, False, "HTTP 404"),
+    _res("nvidia", NEMOTRON, False, "HTTP 404"),
     _res("gemini", GEM_VOLUME, True),
     _res("gemini", GEM_LEAP, False, "HTTP 429"),
     _res("groq", GPT_OSS, False, "HTTP 404"),

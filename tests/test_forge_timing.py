@@ -202,7 +202,7 @@ def test_route_seconds_accumulate_on_success(llm, monkeypatch):
     assert REPLACE_LINE in child
     # a rota tentada (e vencedora) acumulou exatamente o relógio falso
     assert mut.stats["route_seconds"] == {
-        "nvidia/deepseek-ai/deepseek-v4-flash": 2.5}
+        "nvidia/deepseek-ai/deepseek-v4.1-flash": 2.5}
 
 
 def test_route_seconds_accumulate_on_failure(llm, monkeypatch):
@@ -219,6 +219,6 @@ def test_route_seconds_accumulate_on_failure(llm, monkeypatch):
     # mesmo falhando, o tempo de cada rota ficou registrado (é o
     # tempo que some em retries/backoff nas corridas reais)
     assert mut.stats["route_seconds"] == {
-        "nvidia/deepseek-ai/deepseek-v4-flash": 1.25,
-        "nvidia/openai/gpt-oss-120b": 1.5}
+        "nvidia/deepseek-ai/deepseek-v4.1-flash": 1.25,
+        "nvidia/nvidia/nemotron-3-ultra-550b-a55b": 1.5}
     assert mut.stats["failures"] == 1

@@ -25,8 +25,8 @@ SEARCH_LINE = '        desired_mines = 1 + int(t["aggression"] ' \
 REPLACE_LINE = '        desired_mines = 2 + int(t["aggression"] ' \
                '* self.p["mines_coef"])'
 
-PRIMARY = "deepseek-ai/deepseek-v4-flash"
-FALLBACK = "openai/gpt-oss-120b"
+PRIMARY = "deepseek-ai/deepseek-v4.1-flash"
+FALLBACK = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 def _load(name: str, filename: str):
@@ -142,7 +142,7 @@ def test_probe_uses_tiny_payload_and_no_mutation_stats(llm):
     mut = _mutator(llm, transport)
     mut.probe_routes()
     assert transport.calls, "a sonda precisa chamar as rotas"
-    assert all(p["max_tokens"] == 32 for _, p in transport.calls)
+    assert all(p["max_tokens"] == 512 for _, p in transport.calls)
     assert mut.stats["calls"] == {}, \
         "sonda não conta como chamada de mutação"
 
@@ -156,8 +156,8 @@ def test_probe_gate_and_report(llm):
     assert llm.probe_gate([]) is False
     assert llm.probe_gate([bad, ok]) is True
     report = llm.format_probe_report([bad, ok])
-    assert "OK nvidia/openai/gpt-oss-120b" in report
-    assert "FAIL nvidia/deepseek-ai/deepseek-v4-flash" in report
+    assert f"OK nvidia/{FALLBACK}" in report
+    assert f"FAIL nvidia/{PRIMARY}" in report
 
 
 # ------------------------------------------------------------------ #
