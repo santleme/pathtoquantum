@@ -29,7 +29,8 @@ CORE_CENTER = (0.47, 0.47)
 
 def core_crop(im: Image.Image) -> Image.Image:
     w, h = im.size
-    side = w  # quadrado com a largura toda: o reator fica no terço central
+    side = min(w, h)  # quadrado inscrito: seguro para capa retrato ou paisagem
+    assert side > 0
     cx, cy = int(CORE_CENTER[0] * w), int(CORE_CENTER[1] * h)
     x0 = max(0, min(w - side, cx - side // 2))
     y0 = max(0, min(h - side, cy - side // 2))

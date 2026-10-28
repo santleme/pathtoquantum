@@ -102,7 +102,7 @@ export function legendItems(frame: Frame, lensId: string, ctx: LegendContext = {
 }
 
 function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
 /** HTML da legenda (puro, testável): main.ts só injeta no #legend. */

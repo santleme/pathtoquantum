@@ -32,7 +32,8 @@ python3 -m http.server -d dist 8000
 | Frame dinâmico — benchmark sintético 500 empresas / 2.000 partículas | < 8 ms | F0/F1: total 2,28 ms/frame · **re-medido na F6: dinâmico 0,84 ms · fluxo 0,11 ms · total 0,90 ms/frame** | PASSA |
 
 Unidade única desta tabela: **KiB** (bytes ÷ 1024), a mesma que o `measure` calcula
-e usa nos tetos — conferido com `npm run build && npm run measure` nesta revisão
+e usa nos tetos — os números entre parênteses abaixo são a medição da F0/F1,
+datada aqui para não confundir com os totais da F6 na tabela acima
 (app gzip 13.617 B; geografia 116.809 B bruto / 40.972 B gzip; componentes somam:
 53,9 + 60,2 = 114,1 KiB).
 
@@ -205,13 +206,17 @@ geografia inalterada. Longe do teto: nenhuma troca de stack se impõe.
   modos têm cadeia de fetch **independente do replay** (falha neles não quebra
   o replay e vice-versa), mesma trava anti-`..` e mesmo formato de parâmetro.
   **Seletor de arquivo avulso** no header (o que faltava do VIS-07): aplica o
-  `frames.json` escolhido pelo mesmo `applyRun` do `?run=`. A suíte estrutural
+  `frames.json` escolhido pelo mesmo `applyRun` do `?run=`. Divergência
+  intencional do legado, registrada na revisão pós-F6: stage fora de 0..5 é
+  clampado para o rótulo mais próximo (coerente com VIS-12), em vez do `—`
+  que o legado devolvia. A suíte estrutural
   do legado (`node viewer/test_replay.mjs`) segue verde **sem mudança de
   expectativa**, e o legado continua intocado.
 - **VIS-10 acessibilidade:** foco visível global (`:focus-visible` dourado);
   todos os controles com rótulo textual (play com `aria-label`, velocidade e
   arquivo com `<label>`, scrub com `aria-label`); segmentos da barra da cadeia
-  focáveis com `aria-label` completo (elo, estado, primeiro/tick); data do
+  com estado/primeiro/tick em texto visível (sem foco inerte: o `tabindex` sem
+  ação da F6 foi removido na revisão pós-F6); data do
   frame em `aria-live="polite"` discreto e `role="status"` no aviso de lente;
   mapa (canvas) com `role="img"` + descrição apontando a alternativa textual
   sincronizada (placar + legenda + cadeia + crônica em DOM); identidade nunca

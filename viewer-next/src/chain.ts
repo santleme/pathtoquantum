@@ -233,7 +233,7 @@ export function chainBarHtml(
       ? `<span class="cwho"><span class="dot" style="background:${esc(colorByName.get(first.company) ?? '#8b96b8')}"></span>${esc(first.company)} · tick ${first.tick}</span>`
       : '<span class="cwho dim">ninguém ainda</span>';
     return (
-      `<div class="cseg ${state.replace(' ', '-')}" tabindex="0" aria-label="elo ${link.stage} de 5, ${esc(link.label)}: ${state}${first ? `, primeiro ${esc(first.company)} no tick ${first.tick}` : ''}">` +
+      `<div class="cseg ${state.replace(' ', '-')}">` +
       `<span class="clabel">${link.stage}. ${esc(link.label)}</span>${who}` +
       (link.stage === frontier ? '<span class="tag tag-front">em disputa</span>' : '') +
       '</div>'

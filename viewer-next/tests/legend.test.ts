@@ -84,6 +84,16 @@ describe('legenda viva — lente em breve e frame degradado (VIS-12)', () => {
     expect(legendHtml(items)).toContain('0 neste frame');
   });
 
+  it('cor hostil no frame não quebra atributo style da legenda (escape de aspas)', () => {
+    const hostile: Frame = {
+      ...finalFrame,
+      companies: [{ ...finalFrame.companies[0], color: '" onmouseover="alert(1)' }],
+    };
+    const html = legendHtml(legendItems(hostile, 'empresas'));
+    expect(html).not.toContain('" onmouseover="');
+    expect(html).toContain('&quot;');
+  });
+
   it('frame inicial (tick 0) tem as mesmas empresas e nenhuma nota de lente', () => {
     const items = legendItems(frame0, 'empresas');
     expect(companies(items)).toHaveLength(frame0.companies.length);
