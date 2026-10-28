@@ -15,7 +15,7 @@ import {
   stocksListHtml,
 } from '../src/chain';
 import { parseRunData, type Frame } from '../src/contracts';
-import servedFrames from '../../viewer/frames.json';
+import servedFrames from '../../data/served/frames.json';
 
 const run = parseRunData(servedFrames);
 const frame0 = run.frames[0];

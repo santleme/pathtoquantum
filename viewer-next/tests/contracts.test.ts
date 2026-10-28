@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { frameIndexForTick, parseRunData, parseWorldData, resolveRunDir } from '../src/contracts';
 import { citiesFromWorld, depositsFromFrame, depositsFromWorld } from '../src/entities';
 import { RESOURCE_REGISTRY, resourceInfo } from '../src/resources';
-import servedFrames from '../../viewer/frames.json';
+import servedFrames from '../../data/served/frames.json';
 import worldData from '../../data/world_data.json';
 
 describe('contratos (SPEC §0)', () => {

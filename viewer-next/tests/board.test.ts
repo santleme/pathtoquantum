@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseRunData, type Company, type Frame } from '../src/contracts';
 import { boardRowHtml, deltaView, money, nearestCompanyId, rankCompanies, stageSegments } from '../src/board';
-import servedFrames from '../../viewer/frames.json';
-import servedScoreboard from '../../viewer/scoreboard.json';
+import servedFrames from '../../data/served/frames.json';
+import servedScoreboard from '../../data/served/scoreboard.json';
 
 const run = parseRunData(servedFrames);
 const finalFrame = run.frames[run.frames.length - 1];

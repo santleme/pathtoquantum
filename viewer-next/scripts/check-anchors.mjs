@@ -10,8 +10,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const frames = JSON.parse(readFileSync(join(here, '../../viewer/frames.json'), 'utf8'));
-const scoreboard = JSON.parse(readFileSync(join(here, '../../viewer/scoreboard.json'), 'utf8'));
+const frames = JSON.parse(readFileSync(join(here, '../../data/served/frames.json'), 'utf8'));
+const scoreboard = JSON.parse(readFileSync(join(here, '../../data/served/scoreboard.json'), 'utf8'));
 const ch = frames.chronicle;
 
 const counts = {};
