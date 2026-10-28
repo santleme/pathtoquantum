@@ -460,3 +460,41 @@ threshold, seed, RNG ou scoring muda.
 - **Próximo passo**: bundle **src17** sobre esta branch +
   fumaça `--probe-only`; corrida V9 só com o critério forte
   PASS (nemotron-ultra OK + ≥1 Gemini OK).
+
+## Fumaça src17 (28/10/2026) — critério forte NÃO atingido; V9 segue sem lançar
+
+Bundle `pascalcoimbra/mundo-autonomo-src17` sobre a branch
+`forja/portao-sonda` @ b06dc75 (verificação por download: md5 de
+`forge/llm_mutator.py` e `forge/run.py` idênticos ao worktree).
+Kernel `ptq-forge-v1`, versão seguinte à v13 de catálogo,
+notebook `--probe-only`, só o src17 anexado. Sonda concluída em
+195s:
+
+| Rota | Resultado |
+|---|---|
+| nvidia/deepseek-ai/deepseek-v4.1-flash | **OK** |
+| nvidia/nvidia/nemotron-3-ultra-550b-a55b | **OK** (âncora do portão) |
+| gemini/gemini-3-flash-preview | FAIL — HTTP 429 (cota excedida) |
+| gemini/gemini-3.8-flash | FAIL — HTTP 503 (alta demanda) |
+| groq/openai/gpt-oss-120b | OK |
+| groq/qwen/qwen3.8-27b | OK |
+
+- **Critério forte: NÃO PASSOU** — a âncora NVIDIA está viva,
+  mas **nenhuma rota Gemini respondeu**: o volume devolveu 429
+  de cota (leitura: a cota diária da chave, na janela do
+  Pacífico, foi queimada pelos kernels de sonda/fumaça do
+  próprio dia 27–28/10) e o salto devolveu 503 de demanda.
+  Pelo desenho, o portão interno bloquearia a largada de
+  qualquer forma (`FORGE-GATE: BLOCKED` — sem Gemini viva).
+  **Corrida V9 NÃO lançada.**
+- **Sinal de alerta na rota de volume**: a chamada morna extra
+  (rotulada, logo após a sonda) falhou em 565,4s — HTTP 503,
+  timeout de leitura após os retries — minutos depois de a
+  MESMA rota responder OK na sonda. O NIM está instável sob
+  chamadas repetidas nesta janela; a cadeia tem o fallback
+  nemotron para absorver, mas a leitura reforça não largar sem
+  a fundação completa.
+- **Próxima janela**: repetir a fumaça após a virada da cota
+  Gemini (meia-noite do Pacífico ≈ 04–05h de Brasília), de
+  preferência já na janela noturna da corrida; critério forte
+  inalterado.
