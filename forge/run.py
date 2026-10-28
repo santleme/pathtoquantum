@@ -62,6 +62,23 @@ fumaça separado (``--probe-only``) segue existindo como
 diagnóstico, mas a corrida não depende mais de disciplina
 procedural para não repetir a V8.
 
+Porte ShinkaEvolve (issue #21, estudo docs/ESTUDO-SHINKA-FORJA.md)
+em staging — ativação só pós-veredito da corrida #6, por decisão
+do fundador: duas técnicas atrás de flags DESLIGADAS por padrão.
+(1) Amostragem de pais ``weighted`` — peso σ(λ·(F−mediana)) ×
+1/(1+N filhos gerados), λ=10, a configuração validada do paper
+(§3.1); ``power_law`` (rank^(−α)) como estratégia alternativa —
+no lugar do 70/20/10 fixo. (2) Filtro de novidade Tier 1 com
+proxy LOCAL (sem embedding externo): AST normalizado do
+EVOLVE-BLOCK + similaridade difflib contra a subpopulação da
+ilha, rejeitando quase-duplicado ANTES da cascata (status
+``rejected_novelty``) e logando a taxa no summary — o limiar
+(0,98) é da escala do proxy, NÃO o 0,95 do embedding do paper.
+O Tier 2 (juiz LLM) e o bandit de modelos NÃO foram portados:
+o estudo os adia (o bandit exige ≥2 rotas vivas provadas).
+Com as flags desligadas, seleção de pai, consumo de RNG e
+resultados são exatamente os de sempre (bit-idêntico).
+
 Uso no Kaggle (notebook notebooks/forge-v1.ipynb):
     python forge/run.py --iterations 300 --out /kaggle/working/forge-v1
 Local (testes): FORGE_STAGE1_EPISODES / FORGE_STAGE2_EPISODES
@@ -70,12 +87,15 @@ encolhem os estágios, como no avaliador.
 from __future__ import annotations
 
 import argparse
+import ast
 import difflib
 import importlib.util
 import json
+import math
 import random
 import statistics
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -97,6 +117,20 @@ EXPLOITATION = 0.7           # forge/config.yaml: exploitation_ratio
 CHECKPOINT_EVERY = 25        # forge/config.yaml: checkpoint_interval
 MIGRATION_EVERY = 50         # dissecação: migração entre ilhas
 PROBE_GATE_ENABLED = True    # forge/config.yaml: probe_gate (emenda pós-V8)
+
+# Porte ShinkaEvolve (issue #21 — staging, DESLIGADO por padrão;
+# ativação pós-veredito da #6, decisão do fundador).
+PARENT_SAMPLING = "off"      # forge/config.yaml: parent_sampling
+                             # (off | weighted | power_law)
+PARENT_LAMBDA = 10.0         # forge/config.yaml: parent_lambda
+                             # (λ da weighted, paper §3.1)
+PARENT_ALPHA = 1.0           # forge/config.yaml: parent_alpha
+                             # (α da power_law; default do repo
+                             # Shinka — o paper não fixa α)
+NOVELTY_FILTER = False       # forge/config.yaml: novelty_filter
+NOVELTY_THRESHOLD = 0.98     # forge/config.yaml: novelty_threshold
+                             # (escala do proxy AST+difflib; NÃO é
+                             # o 0,95 do embedding do paper)
 
 
 def _load_sibling(name: str, filename: str):
@@ -375,6 +409,98 @@ def format_timing_block(timings: dict) -> str:
 
 
 # --------------------------------------------------------------------- #
+# Porte ShinkaEvolve (issue #21) — funções puras, atrás de flags
+# --------------------------------------------------------------------- #
+_BLOCK_START = "# EVOLVE-BLOCK-START"
+_BLOCK_END = "# EVOLVE-BLOCK-END"
+
+
+def _sigmoid(x: float) -> float:
+    if x >= 0:
+        return 1.0 / (1.0 + math.exp(-x))
+    ex = math.exp(x)
+    return ex / (1.0 + ex)
+
+
+def parent_weights(members: list[str], fitness: dict, children: dict,
+                   strategy: str, lam: float = PARENT_LAMBDA,
+                   alpha: float = PARENT_ALPHA) -> list[float]:
+    """Pesos (não normalizados) de cada membro, na ordem de entrada.
+
+    ``weighted`` (a configuração validada do paper, §3.1):
+    desempenho s = σ(λ·(F − mediana dos F)) e novidade
+    h = 1/(1 + N), com N = filhos já GERADOS pelo pai (candidatos
+    produzidos, aceitos ou não); peso w = s·h. ``power_law``
+    (alternativa do repo, não a validada): w = rank^(−α), rank 1
+    = maior fitness, desempate determinístico pelo hash.
+    """
+    if strategy == "weighted":
+        med = statistics.median(fitness[h] for h in members)
+        return [_sigmoid(lam * (fitness[h] - med))
+                / (1 + children.get(h, 0)) for h in members]
+    if strategy == "power_law":
+        order = sorted(members, key=lambda h: (-fitness[h], h))
+        rank = {h: i + 1 for i, h in enumerate(order)}
+        return [rank[h] ** (-alpha) for h in members]
+    raise ValueError(f"parent_sampling desconhecido: {strategy!r}")
+
+
+def sample_parent(members: list[str], fitness: dict, children: dict,
+                  strategy: str, rng: random.Random,
+                  lam: float = PARENT_LAMBDA,
+                  alpha: float = PARENT_ALPHA) -> str:
+    """Sorteia um pai da ilha pelos pesos da estratégia (1 sorteio)."""
+    weights = parent_weights(members, fitness, children, strategy,
+                             lam=lam, alpha=alpha)
+    total = sum(weights)
+    r = rng.random() * total
+    acc = 0.0
+    for h, w in zip(members, weights):
+        acc += w
+        if r < acc:
+            return h
+    return members[-1]
+
+
+def _mutable_block(source: str) -> str:
+    """O texto entre os marcadores EVOLVE-BLOCK (o programa inteiro
+    se os marcadores faltarem) — é só sobre ele que a novidade do
+    Tier 1 mede: o resto da semente é idêntico em todo candidato."""
+    i = source.find(_BLOCK_START)
+    j = source.find(_BLOCK_END)
+    if i != -1 and j > i:
+        return source[i + len(_BLOCK_START):j]
+    return source
+
+
+def _normalized_form(source: str) -> str:
+    """Forma normalizada do bloco mutável para o proxy de novidade:
+    o dump do AST (apaga formatação e comentários); se o bloco não
+    parsear (a guarda o rejeitaria de qualquer forma), o texto
+    dedentado cru."""
+    block = textwrap.dedent(_mutable_block(source))
+    try:
+        return ast.dump(ast.parse(block))
+    except SyntaxError:
+        return block.strip()
+
+
+def block_similarity(source_a: str, source_b: str) -> float:
+    """Similaridade (difflib, 0..1) entre os blocos mutáveis
+    normalizados de dois programas — o proxy local do Tier 1."""
+    return difflib.SequenceMatcher(
+        None, _normalized_form(source_a),
+        _normalized_form(source_b)).ratio()
+
+
+def max_block_similarity(candidate: str, member_sources) -> float:
+    """Maior similaridade do candidato contra a subpopulação
+    (escopo do Tier 1 na forja: a ilha do candidato)."""
+    return max((block_similarity(candidate, s) for s in member_sources),
+               default=0.0)
+
+
+# --------------------------------------------------------------------- #
 # A corrida
 # --------------------------------------------------------------------- #
 def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
@@ -383,6 +509,8 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
               final: bool = True, test_blocks_override=None,
               final_processes: int = 4, mutator=None,
               probe_gate: bool | None = None,
+              parent_sampling: str | None = None,
+              novelty_filter: bool | None = None,
               clock=time.time) -> dict:
     """Roda a corrida e devolve o resumo (também gravado em out_dir).
 
@@ -391,7 +519,17 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
     ``probe_gate``: portão da sonda pré-voo (emenda pós-V8) —
     None = config (``PROBE_GATE_ENABLED``, default LIGADO);
     False desliga, só para smokes/testes antigos.
+    ``parent_sampling`` / ``novelty_filter``: porte Shinka (#21)
+    — None = config (``PARENT_SAMPLING``/``NOVELTY_FILTER``,
+    defaults DESLIGADOS); a ativação é pós-veredito da #6.
     """
+    sampling = PARENT_SAMPLING if parent_sampling is None \
+        else parent_sampling
+    if sampling not in ("off", "weighted", "power_law"):
+        raise ValueError(
+            f"parent_sampling desconhecido: {sampling!r}")
+    novelty_on = NOVELTY_FILTER if novelty_filter is None \
+        else novelty_filter
     run_t0 = clock()
     ev = _load_sibling("forge_evaluator", "evaluator.py")
     mut = mutator if mutator is not None else build_mutator(mutator_kind)
@@ -492,6 +630,12 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
 
     summary: dict = {"ok": False, "iterations": iterations, "seed": seed,
                      "threshold": threshold, "mutator": mutator_kind}
+    summary["parent_sampling"] = {
+        "strategy": sampling, "lambda": PARENT_LAMBDA,
+        "alpha": PARENT_ALPHA, "enabled": sampling != "off"}
+    summary["novelty"] = {
+        "enabled": bool(novelty_on), "threshold": NOVELTY_THRESHOLD,
+        "scope": "ilha (EVOLVE-BLOCK; proxy AST normalizado + difflib)"}
     try:
         # ---- portão da sonda pré-voo (emenda pós-V8) -------------
         # Infraestrutura, fora do protocolo: sonda ANTES da
@@ -577,18 +721,28 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
         seen = {seed_hash}
         completed = 0
         attempts = 1 if mutator_kind == "llm" else 3
+        children_generated: dict[str, int] = {}
+        novelty_stats = {"checked": 0, "rejected": 0,
+                         "max_similarity": 0.0}
         for i in range(1, iterations + 1):
             t0 = clock()
             island = i % NUM_ISLANDS
             members = islands[island] or [seed_hash]
-            roll = rng.random()
-            if roll < EXPLOITATION:
-                parent_hash = max(members,
-                                  key=lambda h: archive[h]["S1"])
-            elif roll < 0.9:
-                parent_hash = rng.choice(members)
+            if sampling != "off":
+                # Porte Shinka (#21): sorteio ponderado na ilha.
+                parent_hash = sample_parent(
+                    members,
+                    {h: archive[h]["S1"] for h in members},
+                    children_generated, sampling, rng)
             else:
-                parent_hash = seed_hash
+                roll = rng.random()
+                if roll < EXPLOITATION:
+                    parent_hash = max(members,
+                                      key=lambda h: archive[h]["S1"])
+                elif roll < 0.9:
+                    parent_hash = rng.choice(members)
+                else:
+                    parent_hash = seed_hash
             parent_source = sources[parent_hash]
             parent_rec = archive[parent_hash]
             inspirations = []
@@ -616,6 +770,8 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
 
             child, desc, child_hash = None, "", None
             cand_hash, last_exc = None, None
+            novelty_rejected_iter = False
+            novelty_sim_iter: float | None = None
             routes_before = _route_seconds_of(mut)
             t_mut = clock()
             for _attempt in range(attempts):
@@ -626,9 +782,29 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                     last_exc = exc
                     continue
                 cand_hash = program_hash(cand)
-                if cand_hash not in seen:
-                    child, desc, child_hash = cand, cand_desc, cand_hash
-                    break
+                if cand_hash in seen:
+                    continue
+                if novelty_on:
+                    # Tier 1 (porte Shinka #21): quase-duplicado da
+                    # ilha é descartado ANTES da guarda e da cascata;
+                    # consome a tentativa como uma duplicata exata.
+                    sim = max_block_similarity(
+                        cand, [sources[h] for h in members])
+                    novelty_stats["checked"] += 1
+                    novelty_stats["max_similarity"] = max(
+                        novelty_stats["max_similarity"], sim)
+                    novelty_sim_iter = sim
+                    if sim >= NOVELTY_THRESHOLD:
+                        novelty_rejected_iter = True
+                        novelty_stats["rejected"] += 1
+                        continue
+                child, desc, child_hash = cand, cand_desc, cand_hash
+                break
+            if cand_hash is not None:
+                # N do fator de novidade da weighted: filhos GERADOS
+                # pelo pai (candidatos produzidos, aceitos ou não).
+                children_generated[parent_hash] = \
+                    children_generated.get(parent_hash, 0) + 1
             iter_timing = {"mutate_s": round(clock() - t_mut, 3),
                            "stage1_s": None, "stage2_s": None,
                            "routes_s": _route_delta(
@@ -637,18 +813,33 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
                     "island": island,
                     "mutation": desc if child else
                     f"sem mutação nova em {attempts} tentativa(s)"}
+            if sampling != "off":
+                base["parent_sampling"] = sampling
+            if novelty_on and novelty_sim_iter is not None:
+                base["novelty_max_similarity"] = \
+                    round(novelty_sim_iter, 4)
             tail = {"S1": None, "S2": None,
                     "best_S1": best_s1["S1"],
                     "best_S2": best_validated["S2"]
                     if best_validated else None,
                     "seconds": round(clock() - t0, 2)}
             if child is None:
-                status = "rejected_llm" if last_exc is not None and \
-                    "MutationError" in type(last_exc).__name__ else \
-                    "error" if last_exc is not None else "duplicate"
-                reason = (f"{type(last_exc).__name__}: {last_exc}"[:400]
-                          if last_exc is not None
-                          else "hash já avaliado")
+                if last_exc is not None:
+                    status = "rejected_llm" if "MutationError" in \
+                        type(last_exc).__name__ else "error"
+                    reason = \
+                        f"{type(last_exc).__name__}: {last_exc}"[:400]
+                elif novelty_rejected_iter:
+                    status = "rejected_novelty"
+                    reason = (
+                        "quase-duplicado da ilha (Tier 1, proxy "
+                        f"AST+difflib): similaridade "
+                        f"{novelty_sim_iter:.3f} >= limiar "
+                        f"{NOVELTY_THRESHOLD} — descartado ANTES da "
+                        "cascata (porte Shinka #21)")[:400]
+                else:
+                    status = "duplicate"
+                    reason = "hash já avaliado"
                 emit({**base, "hash": cand_hash, "status": status,
                       "reason": reason, **tail,
                       "timing": {**iter_timing,
@@ -715,12 +906,17 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
 
         # ---- campeão + avaliação cega -------------------------------
         champion = best_validated or best_s1
+        summary["novelty"].update({
+            "checked": novelty_stats["checked"],
+            "rejected": novelty_stats["rejected"],
+            "max_similarity": round(novelty_stats["max_similarity"], 4)})
         summary.update({
             "ok": completed == iterations,
             "iterations_completed": completed,
             "counts": {st: sum(1 for r in records if r["status"] == st)
                        for st in ("accepted", "rejected_guard",
-                                  "rejected_llm", "error", "duplicate")},
+                                  "rejected_llm", "rejected_novelty",
+                                  "error", "duplicate")},
             "seed_result": {"hash": seed_hash, "S1": records[0]["S1"],
                             "S2": records[0]["S2"]},
             "champion": champion,
@@ -845,6 +1041,17 @@ def main(argv: list[str]) -> int:
                     help="desliga o portão da sonda DENTRO da corrida "
                     "(emenda pós-V8; default = portão LIGADO, config "
                     "probe_gate) — só para smokes/testes antigos")
+    ap.add_argument("--parent-sampling",
+                    choices=("off", "weighted", "power_law"),
+                    default=None,
+                    help="porte Shinka (#21): amostragem de pais "
+                    "weighted (λ=10) ou power_law no lugar do "
+                    "70/20/10 (default: config parent_sampling, "
+                    "DESLIGADA — ativação pós-veredito da #6)")
+    ap.add_argument("--novelty-filter", action="store_true",
+                    help="porte Shinka (#21): liga o filtro de "
+                    "novidade Tier 1 com proxy local (AST+difflib) "
+                    "antes da cascata (default: DESLIGADO)")
     ap.add_argument("--final-processes", type=int, default=4)
     args = ap.parse_args(argv[1:])
     if args.probe_only:
@@ -875,6 +1082,9 @@ def main(argv: list[str]) -> int:
                             threshold=args.threshold,
                             final=not args.no_final,
                             probe_gate=not args.no_probe_gate,
+                            parent_sampling=args.parent_sampling,
+                            novelty_filter=True
+                            if args.novelty_filter else None,
                             final_processes=args.final_processes)
     except Exception as exc:
         if type(exc).__name__ == "NoKeysError":
