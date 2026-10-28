@@ -8,25 +8,39 @@ checkpoint_interval: 25
 # revertidas (revisão do PR #7 — sem isto o default é False).
 enforce_evolve_blocks: true
 
+# Portão da sonda DENTRO da corrida (emenda pós-V8, branch
+# forja/portao-sonda): run_forge sonda as rotas antes da iteração
+# 0 e se recusa a largar (FORGE-GATE: BLOCKED) sem
+# nvidia/openai/gpt-oss-120b vivo + ≥1 rota Gemini viva; as rotas
+# mortas são podadas da cadeia da corrida. Default LIGADO.
+# Desligar — só para smokes/testes antigos: forge/run.py
+# --no-probe-gate ou run_forge(probe_gate=False).
+probe_gate: true
+
 # Ensemble barato com teto executado por max_iterations: primário
 # rápido/barato na maioria das mutações, forte como tempero.
 # Trocar os modelos por qualquer endpoint OpenAI-compatible.
-# Secundário = 2.5 Pro desde a pesquisa do mutador (27/10/2026,
-# docs/PESQUISA-MUTADOR-FORGE-V1.md §4): o salto tem que ser salto.
+# Secundário = gemini-3.8-flash desde a emenda pós-V8 (o 3.5-flash
+# foi depreciado em 08/10/2026 e roteado silenciosamente para o
+# 3.6; a pesquisa do mutador é docs/PESQUISA-MUTADOR-FORGE-V1.md
+# §4): o salto tem que ser salto — e nomeado, nunca trocado em
+# silêncio.
 # O driver da casa (forge/run.py + forge/llm_mutator.py) usa estes
 # mesmos modelos/pesos. Cadeia de rotas (emenda de provedor de
-# 27/10/2026, pós-429 da Version 7): NVIDIA NIM na frente, depois o
-# par Gemini, depois o par Groq como fallback final — o ensemble
-# roda com qualquer subconjunto das três chaves. O transporte tem
-# ritmo (FORGE_LLM_MIN_INTERVAL_S, default 1,5s) + retry com
+# 27/10/2026, pós-429 da Version 7; cadeia revista na emenda
+# pós-V8): NVIDIA NIM na frente (deepseek-v4-flash + fallback
+# openai/gpt-oss-120b), depois o par Gemini, depois o par Groq
+# como fallback final — o ensemble roda com qualquer subconjunto
+# das três chaves. O transporte tem ritmo
+# (FORGE_LLM_MIN_INTERVAL_S, default 1,5s) + retry com
 # backoff 5s/20s em 429/5xx.
 llm:
   main_provider: "nvidia"
-  main_model: "qwen/qwen3-coder-480b-a35b-instruct"
+  main_model: "deepseek-ai/deepseek-v4-flash"
   main_api_base: "https://integrate.api.nvidia.com/v1"
   primary_model: "gemini-3-flash-preview"
   primary_model_weight: 0.8
-  secondary_model: "gemini-3.5-flash"
+  secondary_model: "gemini-3.8-flash"
   secondary_model_weight: 0.2
   api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
   temperature: 0.7

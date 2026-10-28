@@ -45,6 +45,22 @@ TEMPOS com os agregados (total, média/mediana por iteração, soma
 por fase, fase dominante). É assim que se descobre onde as horas
 do Kaggle foram: geração LLM, avaliação ou retries/backoff.
 
+Portão da sonda (emenda pós-V8, branch forja/portao-sonda —
+infraestrutura, fora do protocolo: nenhum prompt, cascata,
+threshold, seed, RNG ou scoring muda): com o mutador LLM,
+``run_forge`` sonda as rotas ANTES da iteração 0 e se recusa a
+largar (``FORGE-GATE: BLOCKED`` + motivos, zero iterações
+consumidas) sem ``nvidia/openai/gpt-oss-120b`` vivo + ≥1 rota
+Gemini viva (critério em ``llm_mutator.race_gate``; Groq é
+reforço e não conta para o mínimo). As rotas mortas na sonda são
+podadas da cadeia da corrida, com o fato em
+``summary["probe_gate"]``. Desligar — só para smokes/testes
+antigos: ``probe_gate=False`` ou ``--no-probe-gate`` (config
+``probe_gate`` em forge/config.yaml, default LIGADO). O kernel de
+fumaça separado (``--probe-only``) segue existindo como
+diagnóstico, mas a corrida não depende mais de disciplina
+procedural para não repetir a V8.
+
 Uso no Kaggle (notebook notebooks/forge-v1.ipynb):
     python forge/run.py --iterations 300 --out /kaggle/working/forge-v1
 Local (testes): FORGE_STAGE1_EPISODES / FORGE_STAGE2_EPISODES
@@ -79,6 +95,7 @@ NUM_ISLANDS = 5              # forge/config.yaml: database.num_islands
 EXPLOITATION = 0.7           # forge/config.yaml: exploitation_ratio
 CHECKPOINT_EVERY = 25        # forge/config.yaml: checkpoint_interval
 MIGRATION_EVERY = 50         # dissecação: migração entre ilhas
+PROBE_GATE_ENABLED = True    # forge/config.yaml: probe_gate (emenda pós-V8)
 
 
 def _load_sibling(name: str, filename: str):
@@ -364,11 +381,15 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
               threshold: float = CASCADE_THRESHOLD, log=print,
               final: bool = True, test_blocks_override=None,
               final_processes: int = 4, mutator=None,
+              probe_gate: bool | None = None,
               clock=time.time) -> dict:
     """Roda a corrida e devolve o resumo (também gravado em out_dir).
 
     ``clock``: relógio da instrumentação de tempo (injetável nos
     testes); só observa — nenhuma decisão lê o relógio.
+    ``probe_gate``: portão da sonda pré-voo (emenda pós-V8) —
+    None = config (``PROBE_GATE_ENABLED``, default LIGADO);
+    False desliga, só para smokes/testes antigos.
     """
     run_t0 = clock()
     ev = _load_sibling("forge_evaluator", "evaluator.py")
@@ -471,6 +492,47 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
     summary: dict = {"ok": False, "iterations": iterations, "seed": seed,
                      "threshold": threshold, "mutator": mutator_kind}
     try:
+        # ---- portão da sonda pré-voo (emenda pós-V8) -------------
+        # Infraestrutura, fora do protocolo: sonda ANTES da
+        # iteração 0 e, sem a fundação mínima viva, a corrida NÃO
+        # larga — FORGE-GATE: BLOCKED, zero iterações consumidas,
+        # nenhuma seed de teste tocada. Com a fundação viva, as
+        # rotas mortas são podadas da cadeia desta corrida.
+        gate_on = PROBE_GATE_ENABLED if probe_gate is None \
+            else probe_gate
+        if gate_on and hasattr(mut, "probe_routes"):
+            llm_mod = _load_sibling("forge_llm_mutator",
+                                    "llm_mutator.py")
+            results = mut.probe_routes()
+            passed, reasons = llm_mod.race_gate(results)
+            pruned = mut.prune_dead_routes(results) \
+                if hasattr(mut, "prune_dead_routes") else []
+            summary["probe_gate"] = {
+                "enabled": True, "passed": passed,
+                "routes": results, "pruned_routes": pruned,
+                "blocked_reasons": reasons}
+            for line in llm_mod.format_probe_report(
+                    results).splitlines():
+                log(f"  sonda: {line}")
+            if pruned:
+                log("  portão: rotas mortas podadas da cadeia: "
+                    + ", ".join(f"{p['provider']}/{p['model']}"
+                                for p in pruned))
+            if not passed:
+                summary["fatal"] = "FORGE-GATE: BLOCKED — " \
+                    + "; ".join(reasons)
+                log(f"FORGE-GATE: BLOCKED — {'; '.join(reasons)}")
+                return summary
+            log("FORGE-GATE: PASS — fundação viva "
+                "(nvidia/openai/gpt-oss-120b + ≥1 rota Gemini); "
+                "corrida liberada")
+        else:
+            summary["probe_gate"] = {
+                "enabled": bool(gate_on), "passed": None,
+                "pruned_routes": [], "blocked_reasons": [],
+                "note": "portão desligado (probe_gate=False) ou "
+                        "mutador sem sonda (programático)"}
+
         # ---- iteração 0: a semente, nos dois estágios -------------
         seed_source = SEED_PATH.read_text(encoding="utf-8")
         seed_hash = program_hash(seed_source)
@@ -777,6 +839,10 @@ def main(argv: list[str]) -> int:
                     help="sonda pré-voo pós-V8: 1 chamada pequena por "
                     "rota de LLM e veredito PASS/FAIL, sem corrida, "
                     "sem torneio, sem tocar nas seeds de teste")
+    ap.add_argument("--no-probe-gate", action="store_true",
+                    help="desliga o portão da sonda DENTRO da corrida "
+                    "(emenda pós-V8; default = portão LIGADO, config "
+                    "probe_gate) — só para smokes/testes antigos")
     ap.add_argument("--final-processes", type=int, default=4)
     args = ap.parse_args(argv[1:])
     if args.probe_only:
@@ -806,6 +872,7 @@ def main(argv: list[str]) -> int:
                             out_dir=args.out, mutator_kind=args.mutator,
                             threshold=args.threshold,
                             final=not args.no_final,
+                            probe_gate=not args.no_probe_gate,
                             final_processes=args.final_processes)
     except Exception as exc:
         if type(exc).__name__ == "NoKeysError":

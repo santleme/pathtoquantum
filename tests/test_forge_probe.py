@@ -1,7 +1,7 @@
 """Testes da sonda pré-voo da forja (correção pós-V8, issue #6).
 
-A Version 8 morreu de fome: NVIDIA 404 nas 300 chamadas (ID
-qwen/qwen3-coder-480b-a35b-instruct não servido no NIM hospedado),
+A Version 8 morreu de fome: NVIDIA 404 nas 300 chamadas (o ID
+primário não era servido no NIM hospedado),
 Gemini 429 o resto do dia e Groq sem salvar nenhuma mutação — e a
 corrida só descobriu isso iteração a iteração, com backoff. A sonda
 prova as rotas ANTES da corrida, com 1 chamada pequena por rota:
@@ -25,7 +25,7 @@ SEARCH_LINE = '        desired_mines = 1 + int(t["aggression"] ' \
 REPLACE_LINE = '        desired_mines = 2 + int(t["aggression"] ' \
                '* self.p["mines_coef"])'
 
-PRIMARY = "qwen/qwen3-coder-480b-a35b-instruct"
+PRIMARY = "deepseek-ai/deepseek-v4-flash"
 FALLBACK = "openai/gpt-oss-120b"
 
 
@@ -91,7 +91,7 @@ def _v8_like_transport():
         ("nvidia", PRIMARY): (404, "model not found"),
         ("nvidia", FALLBACK): (200, _body("OK")),
         ("gemini", "gemini-3-flash-preview"): (429, "quota exceeded"),
-        ("gemini", "gemini-3.5-flash"): (429, "quota exceeded"),
+        ("gemini", "gemini-3.8-flash"): (429, "quota exceeded"),
         ("groq", "openai/gpt-oss-120b"): (429, "quota exceeded"),
         ("groq", "qwen/qwen3.8-27b"): (404, "model not found"),
     })
@@ -157,7 +157,7 @@ def test_probe_gate_and_report(llm):
     assert llm.probe_gate([bad, ok]) is True
     report = llm.format_probe_report([bad, ok])
     assert "OK nvidia/openai/gpt-oss-120b" in report
-    assert "FAIL nvidia/qwen/qwen3-coder-480b-a35b-instruct" in report
+    assert "FAIL nvidia/deepseek-ai/deepseek-v4-flash" in report
 
 
 # ------------------------------------------------------------------ #

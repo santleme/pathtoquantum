@@ -302,3 +302,106 @@ limpo (ação do fundador: cadastrar os secrets; não é erro).
   300 iterações — a regra (b) continua valendo como regra de
   lançamento. Hipótese da #6 segue ABERTA; nenhum veredito novo
   neste ciclo.
+
+## Emendas pós-V8 — portão interno, poda, captura alargada, cadeia de modelos e os dois bugs da fumaça src15 (27/10/2026)
+
+- **Fatia**: branch `forja/portao-sonda` (base `forja/sonda-pre-voo`
+  @ 27974d0), aprovada pelo fundador. Fecha o limite (i) da seção
+  anterior (o portão entra no código), revê a cadeia de modelos
+  com a pesquisa oficial e corrige na raiz os dois bugs que a
+  fumaça do bundle src15 (kernel `ptq-forge-v1` Version 9, 27/10
+  ~22:56) expôs. **Infraestrutura apenas**: nenhum prompt,
+  cascata (stage1/stage2), threshold, seed, RNG ou scoring
+  mudou — troca de modelo do mutador é infraestrutura, como nas
+  emendas da V7 e da V8.
+- **Bug 1 — a barra que faltava (causa-raiz dos 404 da NVIDIA e
+  da Groq)**: `LLMClient.chat()` montava a URL por concatenação
+  (`base + "chat/completions"`), mas `NVIDIA_API_BASE` e
+  `GROQ_API_BASE` não terminam em `/` — TODAS as chamadas iam
+  para `.../v1chat/completions`. A Groq confessou no próprio
+  corpo do erro da fumaça: `Unknown request URL: POST
+  /openai/v1chat/completions`. **Reinterpretação honesta do
+  histórico**: NVIDIA e Groq estavam inalcançáveis em TODAS as
+  versões (V6–V8); só o Gemini — cuja base termina em `/` — foi
+  testado de verdade até hoje. Os 404 da V8 eram DOIS defeitos
+  sobrepostos: a barra E o ID fora do catálogo (abaixo).
+  Correção na raiz: a junção base+path é normalizada no cliente
+  (`rstrip("/") + "/"`), qualquer que seja a grafia da constante,
+  e `tests/test_forge_gate.py` trava a URL final EXATA dos três
+  provedores.
+- **Bug 2 — o 200 ilegível do Gemini**: na fumaça, o
+  `gemini-3-flash-preview` respondeu HTTP 200 e o parse quebrou
+  com KeyError 'content' (a message veio sem essa chave). Parse
+  defensivo em `_extract_text()`: aceita `content` string,
+  `content` como lista de partes e `reasoning_content` quando o
+  content falta ou vem None; sem texto utilizável, o erro
+  registra a FORMA recebida (nomes das chaves da message + tipo
+  do content — nunca o conteúdo), para a próxima sonda
+  diagnosticar sem adivinhação. Registro honesto: o log da
+  fumaça NÃO traz o corpo da resposta, então a forma exata segue
+  não observada — o parse cobre as formas plausíveis e, se uma
+  próxima fumaça quebrar, o erro agora diz a forma.
+- **Cadeia de modelos (pesquisa oficial de 27/10/2026)**:
+  - NVIDIA principal: `deepseek-ai/deepseek-v4-flash` —
+    confirmado na referência oficial do NIM hospedado
+    (23/10/2026).
+  - NVIDIA fallback: `openai/gpt-oss-120b` — mantido, confirmado
+    no catálogo; na fumaça, o 404 dele era SÓ o Bug 1.
+  - REMOVIDO de vez: `qwen/qwen3-coder-480b-a35b-instruct` —
+    ausente da referência oficial do NIM hospedado; o 404 era
+    definitivo, não transitório.
+  - Gemini volume: `gemini-3-flash-preview` — mantido,
+    confirmado vigente (o defeito dele era o Bug 2, no parse,
+    não no modelo).
+  - Gemini salto: `gemini-3.8-flash` SUBSTITUI o
+    `gemini-3.5-flash`, DEPRECIADO em 08/10/2026 e desde então
+    roteado silenciosamente para o 3.6 — a única rota "OK" da
+    fumaça era um modelo trocado em silêncio, e troca silenciosa
+    de modelo é inaceitável no pré-registro.
+  - Groq: `openai/gpt-oss-120b` (tier Production) +
+    `qwen/qwen3.8-27b` (confirmado; teto de saída de 16.384
+    tokens — acima do MAX_TOKENS=16000 da forja, com folga de
+    apenas 384).
+  - Fontes oficiais: referência de modelos do NIM
+    (docs.api.nvidia.com) e changelog da API Gemini
+    (ai.google.dev/gemini-api/docs/changelog).
+- **Portão dentro de `run_forge()`**: antes da iteração 0, a
+  corrida sonda as rotas e se RECUSA a largar — imprime
+  `FORGE-GATE: BLOCKED` + motivos, grava `summary["fatal"]` e
+  encerra com zero iterações consumidas — a menos que
+  `nvidia/openai/gpt-oss-120b` esteja vivo E ≥1 rota Gemini
+  esteja viva (`llm_mutator.race_gate`; Groq é reforço e NÃO
+  conta para o mínimo). O `probe_gate` fraco (≥1 rota viva)
+  segue valendo só para o relatório do kernel de fumaça
+  (`--probe-only`). Desligar o portão interno é explícito e
+  registrado: `run_forge(probe_gate=False)`,
+  `forge/run.py --no-probe-gate`, config `probe_gate` em
+  forge/config.yaml — default LIGADO, para smokes/testes antigos
+  seguirem o caminho de antes.
+- **Poda de rotas mortas**: as rotas reprovadas na sonda saem da
+  cadeia daquela corrida (`LLMMutator.prune_dead_routes`; o
+  filtro é aplicado depois do sorteio volume/salto — o consumo
+  de RNG não muda), com o fato em
+  `summary["probe_gate"]["pruned_routes"]` (provedor, modelo e
+  erro de cada uma).
+- **Captura alargada por rota**: no `mutate()`, qualquer exceção
+  de transporte de uma rota (não só `MutationError`) conta como
+  falha DAQUELA rota e a cadeia segue para a próxima — fecha o
+  vazamento em que uma exceção fora da tupla do transporte
+  (ex.: `http.client.BadStatusLine`) escapava do `chat()`,
+  pulava o resto da cadeia e a iteração virava `error` no driver
+  (mecanismo plausível do `error: 1` da V8). `MutationError`
+  consolidado só quando TODAS as rotas falham, como antes.
+- **Veredito da fumaça src15 (registro)**: pelo critério forte
+  (gpt-oss-120b NVIDIA vivo + ≥1 Gemini), a fumaça NÃO
+  qualificou — a corrida V9 segue SEM lançar até bundle novo
+  sobre esta branch + nova fumaça aprovada pelo critério forte.
+- **Verificação estrutural**: suíte completa da branch verde
+  (**292 passed** neste ambiente — 272 da base + 20 novos; nos
+  ambientes sem o núcleo nativo compilado, os 18 de paridade
+  pulam, como na base). Testes novos em
+  `tests/test_forge_gate.py` (20: cadeia travada nas 6 rotas,
+  URL exata ×3, parse tolerante ×4, race_gate ×4, poda ×2,
+  captura alargada ×2, portão em run_forge ×4) e IDs atualizados
+  em test_forge_llm/test_forge_probe/test_forge_timing — nenhum
+  teste referencia os IDs mortos.

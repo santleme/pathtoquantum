@@ -11,16 +11,22 @@ MESMA interface do mutador programático do smoke —
 - **NVIDIA NIM (principal)**, pela EMENDA DE PROVEDOR de 27/10/2026:
   a Version 7 morreu por HTTP 429 nas quatro rotas antigas (rajada
   sem ritmo nem backoff; ver docs/FORGE-V1-LOG.md). A NVIDIA entra
-  na frente da cadeia com ``qwen/qwen3-coder-480b-a35b-instruct``
-  no volume (chave gratuita `nvapi-…` de build.nvidia.com, limite
-  ~40 RPM — daí o ritmo/backoff no transporte, ver abaixo);
+  na frente da cadeia com ``deepseek-ai/deepseek-v4-flash`` no
+  volume e ``openai/gpt-oss-120b`` de fallback (chave gratuita
+  `nvapi-…` de build.nvidia.com, limite ~40 RPM — daí o
+  ritmo/backoff no transporte, ver abaixo). O primário anterior
+  foi REMOVIDO na emenda pós-V8: ausente da referência oficial do
+  NIM hospedado, o 404 dele era definitivo, não transitório;
 - **Gemini**, no desenho da config validado pela pesquisa
   (docs/PESQUISA-MUTADOR-FORGE-V1.md §4), com a EMENDA DE MODELOS de
   27/10/2026: a família Gemini 2.5 retorna 404 para a chave do
   fundador (a Version 6 do kernel morreu assim: 300/300 mutações
   `rejected_llm`), então o volume (peso 0,8) é
   ``gemini-3-flash-preview`` e os saltos (peso 0,2) são
-  ``gemini-3.5-flash`` — ambos com sonda HTTP 200 verificada;
+  ``gemini-3.8-flash`` — o salto anterior foi depreciado em
+  08/10/2026 e passou a ser roteado silenciosamente para o 3.6;
+  troca silenciosa de modelo é inaceitável no pré-registro, então
+  a emenda pós-V8 nomeia o 3.8 explicitamente;
 - **Groq (fallback final)**: persistindo a falha, a mutação cai para
   os modelos coder da Groq — ``openai/gpt-oss-120b`` e, persistindo a
   falha, ``qwen/qwen3.8-27b`` (a Groq não serve mais o qwen3-32b).
@@ -62,18 +68,16 @@ NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 
-NVIDIA_VOLUME_MODEL = "qwen/qwen3-coder-480b-a35b-instruct"   # rota principal (emenda 27/10, pós-429 da V7)
-# Fallback NVIDIA (correção pós-V8): a V8 deu HTTP 404 nas 300
-# chamadas do modelo primário — o ID não estava servido no NIM
-# hospedado naquela conta/naquele dia. O fallback é tentado na
-# mesma iteração, antes de cair para Gemini/Groq, e só vale se a
-# sonda pré-voo prová-lo vivo: ID confirmado na tabela de modelos
-# suportados da NVIDIA (docs.nvidia.com/nim, GPT-OSS-120B).
+NVIDIA_VOLUME_MODEL = "deepseek-ai/deepseek-v4-flash"   # rota principal (emenda pós-V8: confirmado na referência oficial do NIM hospedado, 23/10/2026; o primário anterior saiu da cadeia — 404 definitivo, não transitório)
+# Fallback NVIDIA (correção pós-V8): tentado na mesma iteração,
+# antes de cair para Gemini/Groq, e é a fundação do portão da
+# corrida (race_gate): ID confirmado na referência oficial de
+# modelos suportados da NVIDIA (GPT-OSS-120B).
 NVIDIA_FALLBACK_MODELS = ("openai/gpt-oss-120b",)
 GEMINI_VOLUME_MODEL = "gemini-3-flash-preview"   # peso 0,8 — volume (emenda 27/10: 2.5-flash-lite dá 404 p/ esta chave)
-GEMINI_LEAP_MODEL = "gemini-3.5-flash"            # peso 0,2 — saltos (emenda 27/10: 2.5-pro idem; 3.1-pro-preview 429 na cota)
+GEMINI_LEAP_MODEL = "gemini-3.8-flash"            # peso 0,2 — saltos (emenda pós-V8: o salto anterior foi depreciado em 08/10/2026 e roteado silenciosamente p/ o 3.6; troca silenciosa é inaceitável no pré-registro)
 GEMINI_LEAP_WEIGHT = 0.2
-GROQ_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.8-27b")   # qwen3-32b não é mais servido pela Groq
+GROQ_MODELS = ("openai/gpt-oss-120b", "qwen/qwen3.8-27b")   # qwen3-32b não é mais servido pela Groq; o 3.8-27b tem teto de saída de 16.384 tokens (≥ MAX_TOKENS)
 
 TEMPERATURE = 0.7
 MAX_TOKENS = 16000
@@ -103,6 +107,39 @@ def format_probe_report(results: list[dict]) -> str:
             lines.append(f"FAIL {r['provider']}/{r['model']} — "
                          f"{r.get('error', '')}")
     return "\n".join(lines)
+
+
+# Portão DA CORRIDA (emenda pós-V8, branch forja/portao-sonda):
+# mais forte que o probe_gate do kernel de fumaça (≥1 rota viva
+# basta para o RELATÓRIO da fumaça; para LARGAR 300 iterações, não).
+# A fundação mínima da V9 é o fallback NVIDIA confirmado na
+# referência oficial (openai/gpt-oss-120b) + redundância Gemini.
+# Groq é reforço, não fundação (free tier volátil) — não conta
+# para o mínimo.
+GATE_REQUIRED_ROUTE = ("nvidia", NVIDIA_FALLBACK_MODELS[0])
+GATE_SECOND_PROVIDER = "gemini"
+
+
+def race_gate(results: list[dict]) -> tuple[bool, list[str]]:
+    """(pode largar?, motivos de bloqueio) do portão interno.
+
+    PASS exige: (a) a rota obrigatória
+    ``nvidia/openai/gpt-oss-120b`` viva; (b) ≥1 rota Gemini viva.
+    Bloqueando, devolve cada motivo nomeado — é o texto que o
+    ``FORGE-GATE: BLOCKED`` do driver imprime.
+    """
+    live = {(r.get("provider"), r.get("model"))
+            for r in results if r.get("ok")}
+    reasons: list[str] = []
+    if GATE_REQUIRED_ROUTE not in live:
+        reasons.append(
+            f"rota obrigatória morta: {GATE_REQUIRED_ROUTE[0]}/"
+            f"{GATE_REQUIRED_ROUTE[1]} (fundação NVIDIA do portão)")
+    if not any(p == GATE_SECOND_PROVIDER for p, _m in live):
+        reasons.append(
+            "nenhuma rota Gemini viva (o mínimo exige ≥1; Groq é "
+            "reforço e não conta para a fundação)")
+    return not reasons, reasons
 TIMEOUT_S = 180
 MAX_CODE_LENGTH = 40000          # forge/config.yaml: max_code_length
 
@@ -277,13 +314,58 @@ _PROVIDER_BASES = {"nvidia": NVIDIA_API_BASE,
                    "groq": GROQ_API_BASE}
 
 
+def _extract_text(data: dict, label: str) -> str:
+    """O texto da 1ª choice, tolerante às formas dos provedores.
+
+    Formas aceitas: ``content`` string; ``content`` como lista de
+    partes (``{"type": "text", "text": ...}``); ``content``
+    ausente/None com ``reasoning_content`` utilizável — a forma do
+    200 ilegível da fumaça src15 (gemini-3-flash-preview respondeu
+    HTTP 200 e o parse antigo quebrou com KeyError 'content').
+    Sem texto utilizável, MutationError com a FORMA recebida
+    (nomes das chaves da message e o tipo do content — nunca o
+    conteúdo), para a próxima sonda diagnosticar sem adivinhação.
+    """
+    try:
+        message = data["choices"][0].get("message") or {}
+    except Exception as exc:
+        raise MutationError(
+            f"{label} resposta ilegível: sem choices ({exc})"
+        ) from exc
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        text = "".join(p.get("text", "") for p in content
+                       if isinstance(p, dict))
+        if text.strip():
+            return text
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        return reasoning
+    raise MutationError(
+        f"{label} resposta sem texto utilizável "
+        f"(message_keys={sorted(message)}, "
+        f"content_type={type(content).__name__})")
+
+
 class LLMClient:
     """Chat completions mínimo, um provedor por instância."""
 
     def __init__(self, provider: str, api_key: str, transport=None):
         self.provider = provider
         self._api_key = api_key
-        self.base = _PROVIDER_BASES[provider]
+        # Junção base+path NORMALIZADA (correção pós-V8 — a
+        # causa-raiz dos 404 históricos): as bases NVIDIA/Groq
+        # NÃO terminam em "/" e o chat() concatenava
+        # "chat/completions" direto, então TODAS as chamadas iam
+        # para ".../v1chat/completions": NVIDIA e Groq ficaram
+        # inalcançáveis em TODAS as versões V6–V8 e só o Gemini
+        # (base com "/" final) foi testado de verdade. Normalizar
+        # aqui torna a junção correta qualquer que seja a grafia
+        # da constante; tests/test_forge_gate.py trava a URL final
+        # exata dos 3 provedores.
+        self.base = _PROVIDER_BASES[provider].rstrip("/") + "/"
         self.transport = transport or _default_transport
 
     def chat(self, model: str, messages: list[dict],
@@ -299,14 +381,11 @@ class LLMClient:
                 f"{self.provider}/{model} HTTP {status}: {body[:200]}")
         try:
             data = json.loads(body)
-            text = data["choices"][0]["message"]["content"]
         except Exception as exc:
             raise MutationError(
                 f"{self.provider}/{model} resposta ilegível: {exc}"
             ) from exc
-        if not text or not text.strip():
-            raise MutationError(f"{self.provider}/{model} resposta vazia")
-        return text
+        return _extract_text(data, f"{self.provider}/{model}")
 
 
 # --------------------------------------------------------------------- #
@@ -423,6 +502,10 @@ class LLMMutator:
                 "Kaggle")
         self.stats = {"calls": {}, "fallbacks": 0, "failures": 0,
                       "route_seconds": {}}
+        # Poda pós-sonda (emenda pós-V8): None = cadeia inteira;
+        # depois de prune_dead_routes(), só as rotas vivas.
+        self._live_routes: set | None = None
+        self.pruned_routes: list[dict] = []
 
     # -- cadeia de rotas de uma iteração ------------------------------ #
     def _route_chain(self, rng: random.Random) -> list[tuple[str, str]]:
@@ -437,6 +520,11 @@ class LLMMutator:
             chain += [("gemini", primary), ("gemini", other)]
         if "groq" in self.clients:
             chain += [("groq", m) for m in GROQ_MODELS]
+        if self._live_routes is not None:
+            # A poda filtra DEPOIS da montagem: o sorteio
+            # volume/salto do Gemini já consumiu o RNG — podar não
+            # muda o consumo de sorteios de ninguém.
+            chain = [r for r in chain if r in self._live_routes]
         return chain
 
     def _call(self, provider: str, model: str, messages) -> str:
@@ -477,6 +565,22 @@ class LLMMutator:
                                 "ok": False, "error": str(exc)[:160]})
         return results
 
+    def prune_dead_routes(self, results: list[dict]) -> list[dict]:
+        """Poda (emenda pós-V8): fixa a cadeia DESTA instância nas
+        rotas que a sonda aprovou — rota morta não é paga de novo
+        a cada iteração (na V8, a cadeia inteira degradada custava
+        ~1–2,4 min/iteração de retries). Devolve os registros
+        podados ({provider, model, error}) para o driver gravar no
+        summary. A sonda roda ANTES da poda: sondar depois só
+        retesta as vivas."""
+        self._live_routes = {(r["provider"], r["model"])
+                             for r in results if r.get("ok")}
+        self.pruned_routes = [
+            {"provider": r["provider"], "model": r["model"],
+             "error": r.get("error", "")}
+            for r in results if not r.get("ok")]
+        return self.pruned_routes
+
     # -- a interface do loop ------------------------------------------ #
     def mutate(self, parent_source: str, rng: random.Random,
                feedback: dict | None = None) -> tuple[str, str]:
@@ -492,6 +596,20 @@ class LLMMutator:
                 response = self._call(provider, model, messages)
             except MutationError as exc:
                 errors.append(str(exc)[:160])
+                continue
+            except Exception as exc:
+                # Captura alargada (emenda pós-V8): o transporte
+                # default só traduz URLError/OSError/
+                # RemoteDisconnected; fora dessa tupla (ex.:
+                # http.client.BadStatusLine) a exceção escapava do
+                # chat(), pulava o RESTO da cadeia da iteração e o
+                # driver registrava `error` — mecanismo plausível
+                # do error:1 da V8. Agora qualquer exceção de
+                # transporte é falha DESTA rota e a cadeia segue;
+                # MutationError consolidado só quando TODAS
+                # falharem (fim do laço, como antes).
+                errors.append(f"{provider}/{model}: "
+                              f"{type(exc).__name__}: {exc}"[:160])
                 continue
             summary = ""
             m = re.search(r"^SUMMARY:\s*(.+)$", response, re.MULTILINE)

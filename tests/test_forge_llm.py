@@ -173,7 +173,7 @@ def test_prompt_carries_feedback(llm):
     assert "mina aberta" in user             # Crônica
     assert "INSPIRATION" in user
     assert "EvolvedPolicy" in user          # o fonte do pai
-    assert seen["model"] in ("gemini-3-flash-preview", "gemini-3.5-flash")
+    assert seen["model"] in ("gemini-3-flash-preview", "gemini-3.8-flash")
 
 
 def test_groq_only_route(llm):
@@ -191,11 +191,11 @@ def test_nvidia_only_route(llm):
     child, desc = mut.mutate(SEED, random.Random(1), None)
     assert REPLACE_LINE in child
     assert desc.startswith(
-        "llm[nvidia/qwen/qwen3-coder-480b-a35b-instruct]")
+        "llm[nvidia/deepseek-ai/deepseek-v4-flash]")
     assert all("integrate.api.nvidia.com" in u
                for u, _ in transport.calls)
     assert mut.stats["calls"] == {
-        "nvidia/qwen/qwen3-coder-480b-a35b-instruct": 1}
+        "nvidia/deepseek-ai/deepseek-v4-flash": 1}
 
 
 def test_nvidia_first_then_gemini(llm):
