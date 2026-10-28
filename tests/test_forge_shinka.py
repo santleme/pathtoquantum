@@ -1,4 +1,4 @@
-"""Testes do porte ShinkaEvolve (issue #21) — staging atrás de flags.
+"""Testes do porte ShinkaEvolve (issue #21) — ativado em 28/10/2026.
 
 Duas técnicas portadas do estudo docs/ESTUDO-SHINKA-FORJA.md:
 (1) amostragem de pais weighted (λ=10, a config validada do
@@ -6,11 +6,14 @@ paper §3.1) / power_law, no lugar do 70/20/10; (2) filtro de
 novidade Tier 1 com proxy LOCAL (AST normalizado do EVOLVE-BLOCK
 + difflib), rejeitando quase-duplicado ANTES da cascata.
 
-A aceitação da issue: flags DESLIGADAS por padrão e, desligadas,
-a corrida é bit-idêntica à de sempre — provado aqui comparando
-uma mini-corrida default com outra com as flags explicitamente
-desligadas (mesmos registros, mesmo campeão), e pela suíte
-existente inteira verde sem alteração.
+O porte nasceu em staging (flags desligadas) e foi ATIVADO por
+decisão do fundador em 28/10/2026: os defaults agora são
+weighted + filtro ligado. A aceitação que continua valendo:
+com as flags explicitamente desligadas, a corrida é bit-idêntica
+à de sempre — provado aqui comparando a mini-corrida com flags
+explícitas "off" contra a mesma corrida com os defaults de
+config desligados via monkeypatch (mesmos registros, mesmo
+campeão), e pela suíte existente inteira verde.
 """
 from __future__ import annotations
 
@@ -65,11 +68,11 @@ class P:
 
 
 # ------------------------------------------------------------------ #
-# Defaults: o porte nasce DESLIGADO
+# Defaults: ATIVADOS por decisão do fundador (28/10/2026)
 # ------------------------------------------------------------------ #
-def test_flags_default_off(run):
-    assert run.PARENT_SAMPLING == "off"
-    assert run.NOVELTY_FILTER is False
+def test_flags_default_on_after_activation(run):
+    assert run.PARENT_SAMPLING == "weighted"
+    assert run.NOVELTY_FILTER is True
     assert run.PARENT_LAMBDA == 10.0        # λ do paper, §3.1
     assert run.PARENT_ALPHA == 1.0          # default do repo Shinka
     # limiar do PROXY local — não o 0,95 do embedding do paper
@@ -171,20 +174,43 @@ def test_mini_run_flags_off_is_the_legacy_run(run, tmp_path,
     monkeypatch.setenv("FORGE_STAGE2_EPISODES", "4")
     common = dict(iterations=3, seed=7, mutator_kind="programmatic",
                   final=False, log=lambda *a: None)
-    default = run.run_forge(out_dir=tmp_path / "a", **common)
     explicit_off = run.run_forge(out_dir=tmp_path / "b",
                                  parent_sampling="off",
                                  novelty_filter=False, **common)
-    assert _strip_timing(default["records"]) == \
+    # o default PRÉ-ativação (config desligada) tem que ser a
+    # MESMA corrida que as flags explícitas "off": bit-idêntico
+    monkeypatch.setattr(run, "PARENT_SAMPLING", "off")
+    monkeypatch.setattr(run, "NOVELTY_FILTER", False)
+    config_off = run.run_forge(out_dir=tmp_path / "a", **common)
+    assert _strip_timing(config_off["records"]) == \
         _strip_timing(explicit_off["records"])
-    assert default["champion_hash"] == explicit_off["champion_hash"]
-    assert default["counts"] == explicit_off["counts"]
-    assert default["parent_sampling"]["enabled"] is False
-    assert default["novelty"]["enabled"] is False
-    assert default["counts"]["rejected_novelty"] == 0
-    for rec in default["records"][1:]:
+    assert config_off["champion_hash"] == explicit_off["champion_hash"]
+    assert config_off["counts"] == explicit_off["counts"]
+    assert explicit_off["parent_sampling"]["enabled"] is False
+    assert explicit_off["novelty"]["enabled"] is False
+    assert explicit_off["counts"]["rejected_novelty"] == 0
+    for rec in explicit_off["records"][1:]:
         assert "novelty_max_similarity" not in rec
         assert "parent_sampling" not in rec
+
+
+def test_mini_run_default_is_activated(run, tmp_path, monkeypatch):
+    # sem NENHUM argumento de flag: o default pós-ativação roda
+    # com weighted + novidade ligados (decisão do fundador,
+    # 28/10/2026)
+    monkeypatch.setenv("FORGE_STAGE1_EPISODES", "2")
+    monkeypatch.setenv("FORGE_STAGE2_EPISODES", "4")
+    summary = run.run_forge(iterations=3, seed=7,
+                            out_dir=tmp_path / "default",
+                            mutator_kind="programmatic", final=False,
+                            log=lambda *a: None)
+    assert summary["ok"] is True
+    assert summary["parent_sampling"]["enabled"] is True
+    assert summary["parent_sampling"]["strategy"] == "weighted"
+    assert summary["novelty"]["enabled"] is True
+    assert "rejected_novelty" in summary["counts"]
+    assert all(r.get("parent_sampling") == "weighted"
+               for r in summary["records"][1:])
 
 
 def test_mini_run_flags_on_smoke(run, tmp_path, monkeypatch):

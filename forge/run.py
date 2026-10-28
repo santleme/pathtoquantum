@@ -63,8 +63,12 @@ diagnóstico, mas a corrida não depende mais de disciplina
 procedural para não repetir a V8.
 
 Porte ShinkaEvolve (issue #21, estudo docs/ESTUDO-SHINKA-FORJA.md)
-em staging — ativação só pós-veredito da corrida #6, por decisão
-do fundador: duas técnicas atrás de flags DESLIGADAS por padrão.
+— ATIVADO por decisão expressa do fundador em 28/10/2026: as duas
+técnicas são o DEFAULT desta linhagem (merge do PR #27 + commit de
+ativação). A ativação foi antecipada em relação ao staging
+original (pós-veredito da #6) por decisão dele, e NÃO alcança a
+corrida V9: ela roda o bundle congelado src17, montado antes —
+a ativação vale para as corridas montadas desta branch em diante.
 (1) Amostragem de pais ``weighted`` — peso σ(λ·(F−mediana)) ×
 1/(1+N filhos gerados), λ=10, a configuração validada do paper
 (§3.1); ``power_law`` (rank^(−α)) como estratégia alternativa —
@@ -76,8 +80,9 @@ ilha, rejeitando quase-duplicado ANTES da cascata (status
 (0,98) é da escala do proxy, NÃO o 0,95 do embedding do paper.
 O Tier 2 (juiz LLM) e o bandit de modelos NÃO foram portados:
 o estudo os adia (o bandit exige ≥2 rotas vivas provadas).
-Com as flags desligadas, seleção de pai, consumo de RNG e
-resultados são exatamente os de sempre (bit-idêntico).
+Desligar continua possível e bit-idêntico ao comportamento
+pré-porte: ``--parent-sampling off`` + ``--no-novelty-filter``
+(ou os argumentos de ``run_forge``).
 
 Uso no Kaggle (notebook notebooks/forge-v1.ipynb):
     python forge/run.py --iterations 300 --out /kaggle/working/forge-v1
@@ -118,16 +123,17 @@ CHECKPOINT_EVERY = 25        # forge/config.yaml: checkpoint_interval
 MIGRATION_EVERY = 50         # dissecação: migração entre ilhas
 PROBE_GATE_ENABLED = True    # forge/config.yaml: probe_gate (emenda pós-V8)
 
-# Porte ShinkaEvolve (issue #21 — staging, DESLIGADO por padrão;
-# ativação pós-veredito da #6, decisão do fundador).
-PARENT_SAMPLING = "off"      # forge/config.yaml: parent_sampling
+# Porte ShinkaEvolve (issue #21 — ATIVADO por decisão do fundador
+# em 28/10/2026: defaults LIGADOS nesta linhagem; a V9 roda o
+# bundle congelado src17 e não é afetada).
+PARENT_SAMPLING = "weighted"  # forge/config.yaml: parent_sampling
                              # (off | weighted | power_law)
 PARENT_LAMBDA = 10.0         # forge/config.yaml: parent_lambda
                              # (λ da weighted, paper §3.1)
 PARENT_ALPHA = 1.0           # forge/config.yaml: parent_alpha
                              # (α da power_law; default do repo
                              # Shinka — o paper não fixa α)
-NOVELTY_FILTER = False       # forge/config.yaml: novelty_filter
+NOVELTY_FILTER = True        # forge/config.yaml: novelty_filter
 NOVELTY_THRESHOLD = 0.98     # forge/config.yaml: novelty_threshold
                              # (escala do proxy AST+difflib; NÃO é
                              # o 0,95 do embedding do paper)
@@ -521,7 +527,9 @@ def run_forge(iterations: int = 300, seed: int = 42, out_dir=None,
     False desliga, só para smokes/testes antigos.
     ``parent_sampling`` / ``novelty_filter``: porte Shinka (#21)
     — None = config (``PARENT_SAMPLING``/``NOVELTY_FILTER``,
-    defaults DESLIGADOS); a ativação é pós-veredito da #6.
+    defaults ATIVOS desde a ativação de 28/10/2026: weighted +
+    filtro ligado); passar ``"off"``/``False`` reproduz o
+    comportamento pré-porte, bit-idêntico.
     """
     sampling = PARENT_SAMPLING if parent_sampling is None \
         else parent_sampling
@@ -1046,12 +1054,19 @@ def main(argv: list[str]) -> int:
                     default=None,
                     help="porte Shinka (#21): amostragem de pais "
                     "weighted (λ=10) ou power_law no lugar do "
-                    "70/20/10 (default: config parent_sampling, "
-                    "DESLIGADA — ativação pós-veredito da #6)")
+                    "70/20/10 (default: config parent_sampling = "
+                    "weighted, ATIVO desde 28/10/2026; 'off' volta "
+                    "ao 70/20/10 legado)")
     ap.add_argument("--novelty-filter", action="store_true",
                     help="porte Shinka (#21): liga o filtro de "
                     "novidade Tier 1 com proxy local (AST+difflib) "
-                    "antes da cascata (default: DESLIGADO)")
+                    "antes da cascata (default: LIGADO desde "
+                    "28/10/2026)")
+    ap.add_argument("--no-novelty-filter", action="store_true",
+                    help="porte Shinka (#21): DESLIGA o filtro de "
+                    "novidade Tier 1 (comportamento pré-porte); "
+                    "se --novelty-filter tambem for passado, "
+                    "o --no- vence (desligar tem precedencia)")
     ap.add_argument("--final-processes", type=int, default=4)
     args = ap.parse_args(argv[1:])
     if args.probe_only:
@@ -1083,8 +1098,9 @@ def main(argv: list[str]) -> int:
                             final=not args.no_final,
                             probe_gate=not args.no_probe_gate,
                             parent_sampling=args.parent_sampling,
-                            novelty_filter=True
-                            if args.novelty_filter else None,
+                            novelty_filter=False
+                            if args.no_novelty_filter else (
+                                True if args.novelty_filter else None),
                             final_processes=args.final_processes)
     except Exception as exc:
         if type(exc).__name__ == "NoKeysError":

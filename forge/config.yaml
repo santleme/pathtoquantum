@@ -19,15 +19,20 @@ enforce_evolve_blocks: true
 probe_gate: true
 
 # Porte ShinkaEvolve (issue #21, estudo docs/ESTUDO-SHINKA-FORJA.md)
-# em staging: técnicas 1 (pais) e 2 (novidade Tier 1) atrás de
-# flags, DESLIGADAS por padrão — ativação só pós-veredito da
-# corrida #6, por decisão do fundador. Com as flags desligadas, a
-# corrida é bit-idêntica à atual (seleção, RNG e resultados).
+# — ATIVADO por decisão expressa do fundador em 28/10/2026
+# (merge do PR #27 + commit de ativação): técnicas 1 (pais) e 2
+# (novidade Tier 1) LIGADAS por padrão nesta linhagem. A ativação
+# foi antecipada em relação ao staging original (pós-veredito da
+# #6) e NÃO alcança a corrida V9, que roda o bundle congelado
+# src17 — vale para corridas montadas desta branch em diante.
+# Desligar (bit-idêntico ao pré-porte): parent_sampling "off" +
+# novelty_filter false aqui, ou --parent-sampling off
+# --no-novelty-filter na CLI.
 # Pais: weighted = σ(λ·(F−mediana)) × 1/(1+N filhos gerados), a
 # configuração validada do paper (§3.1); power_law = rank^(−α) é a
 # alternativa do repo (o paper não fixa α; 1,0 é o default dele).
-# Substitui o 70/20/10 fixo do driver quando ligada.
-parent_sampling: "off"
+# Substitui o 70/20/10 fixo do driver.
+parent_sampling: "weighted"
 parent_lambda: 10.0
 parent_alpha: 1.0
 # Novidade Tier 1 com proxy LOCAL (sem embedding externo): AST
@@ -37,7 +42,7 @@ parent_alpha: 1.0
 # logada nas primeiras corridas com a flag ligada. O Tier 2 (juiz
 # LLM) e o bandit de modelos NÃO foram portados (adiados pelo
 # estudo; o bandit exige ≥2 rotas vivas provadas).
-novelty_filter: false
+novelty_filter: true
 novelty_threshold: 0.98
 
 # Ensemble barato com teto executado por max_iterations: primário
