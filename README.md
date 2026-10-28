@@ -14,12 +14,13 @@ A corrida tem duas eras: **Path to the Supercomputer** (implementada) e **Path t
 
 ## 👀 Assista
 
-Rode o quickstart abaixo (2 comandos) e abra **`viewer/index.html`** no navegador: mapa da América do Sul com territórios, placar e a crônica da corrida gerada. O viewer é um arquivo único, sem dependências, e aceita qualquer corrida:
+Rode o quickstart abaixo e abra o **viewer-next** (`cd viewer-next && npm run dev`): mapa da América do Sul com contorno real da Terra, territórios, placar e a crônica da corrida gerada. O viewer aceita qualquer corrida, sobre **os mesmos JSONs** de sempre — o motor não muda:
 
-- `viewer/index.html?run=results/<corrida>` — carrega os `frames/chronicle/scoreboard.json` daquela corrida; clicar num marco da crônica salta o replay àquele momento.
-- `viewer/index.html?forge=results/forge-v1` — o painel da forja: veredito da corrida evolutiva, campeão, avaliação cega e estatísticas do mutador.
+- `?run=results/<corrida>` — carrega os `frames/chronicle/scoreboard.json` daquela corrida; clicar num marco da crônica salta o replay àquele momento.
+- `?forge=results/forge-v1` — o painel da forja: veredito da corrida evolutiva, campeão, avaliação cega e estatísticas do mutador.
+- `?compare=results/<outra>` — comparador de corridas por frame final.
 
-> O próximo sistema visual — mapa com contorno real da Terra, 5 lentes (Recursos · Produção · Comércio · Empresas · Crônica), fluxo desenhado e crônica tipografada — está desenhado no estudo de referência visual e entra pela frente do viewer-next (ADR-001), sobre **os mesmos JSONs**: o motor não muda.
+> O sistema visual — mapa com contorno real, lentes (Recursos · Produção · Comércio · Empresas · Crônica), fluxo desenhado e crônica tipografada — é o viewer-next, regido pelo ADR-001 e pela SPEC-VISUAL-WOW (fechada). O player original de arquivo único (`viewer/index.html`) foi aposentado: tudo que ele fazia vive no viewer-next (paridade provada no VIS-07).
 
 ## 📖 A primeira história (smoke real, seed 42, 24 meses)
 
@@ -65,7 +66,7 @@ flowchart LR
     end
     ENGINE --> CHRON["chronicle.py + chronicle_rich.py<br/>📖 a Crônica + retrospectiva"]
     ENGINE --> FRAMES["frames.json + scoreboard.json"]
-    CHRON --> VIEWER["viewer/index.html<br/>mapa · placar · crônica · painel da forja"]
+    CHRON --> VIEWER["viewer-next<br/>mapa · placar · crônica · painel da forja"]
     FRAMES --> VIEWER
     NAT["native_engine.py<br/>núcleo C++ opt-in, paridade 11/11"] -.-> ENGINE
     TOR["tournament.py · forge/<br/>CMA-ES · evolução por LLM"] -.-> COMP
@@ -120,10 +121,10 @@ Nada aqui é promessa: cada linha diz o status **e onde o item vive** (medido ne
 | Guarda v2 — Observation tipada + Intentions | ✅ Migração fechada | `observation.py` · `intentions.py` · `docs/OBSERVATION-SPEC.md` |
 | Torneio de políticas (genoma de 20 genes, CMA-ES em liga) | ✅ Construído e lançado no Kaggle | `genome.py` · `tournament.py` · `notebooks/torneio-v1.ipynb` |
 | Crônica rica (rivalidades + retrospectiva por era) | ✅ Entregue (#13) | `chronicle_rich.py` · testes |
-| Viewer (replay, `?run=`, comparador, painel da forja) | ✅ Nesta base | `viewer/index.html` |
+| Viewer (replay, `?run=`, comparador, painel da forja) | ✅ Nesta base | `viewer-next/` |
 | Forja evolutiva — políticas-código por LLM (#6) | 🚧 Corrida v1 preparada; corridas V6–V8 na linha Kaggle | `forge/` · `program.py` · `docs/FORGE-LOG.md` · branches irmãs da forja |
 | Exportador Rerun de corridas (#20) | 🚧 Em branch própria | branch `frente/rerun-exporter` (não está nesta base) |
-| Viewer-next — sistema visual por lentes | 📐 Desenhado (estudo + ADR-001) | frente irmã do viewer; consome os mesmos JSONs |
+| Viewer-next — sistema visual por lentes | ✅ Spec VISUAL-WOW fechada | `viewer-next/` — o viewer do projeto; o legado `viewer/` foi aposentado |
 | Era 2 — elos até o computador quântico | 📐 Declarada | `DESIGN.md` · issue #17 (épica v3) |
 | Licença do projeto | ⚠️ **Em aberto** — não há `LICENSE` neste repo | decisão pendente do fundador; nenhum badge de licença é exibido até existir |
 
@@ -139,10 +140,10 @@ Requer Python ≥ 3.11. O motor não tem dependências de runtime; os testes usa
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 .venv/bin/python -m pytest -q        # a suíte estrutural (determinismo, conservação, fog, cadeia, guarda, torneio, forja)
-.venv/bin/python -m mundo.cli --seed 42 --ticks 24 --out viewer
+.venv/bin/python -m mundo.cli --seed 42 --ticks 24 --out data/served
 ```
 
-Abra **`viewer/index.html`** no navegador: o mapa da América do Sul com os territórios, o placar das empresas e a crônica da corrida de 24 meses que você acabou de gerar no mundo atual.
+Abra o **viewer-next** (`cd viewer-next && npm install && npm run dev`): o mapa da América do Sul com os territórios, o placar das empresas e a crônica da corrida de 24 meses que você acabou de gerar no mundo atual. (`data/served/` é a corrida que o viewer abre sem parâmetros; gerar nela substitui a exibida.)
 
 Para mexer no mundo: `--companies N` muda o número de empresas, `--seed N` muda o destino, e `--events eventos.json` injeta atos de Deus (choque de preço, descoberta, sanção).
 
@@ -219,8 +220,8 @@ src/mundo/      motor (23 módulos): engine · native_engine+native/ · world/re
                 chain · companies · policies/genome/program · observation/intentions ·
                 tournament/driver · tools_sim · chronicle/chronicle_rich · cli
 forge/          a forja evolutiva: mutador LLM · avaliador em cascata · avaliação cega · veredito
-viewer/         player web (arquivo único) + JSONs da corrida exibida
-data/           mundo real e parâmetros vivos — dado com fonte citada por item
+viewer-next/    o viewer (Vite + TypeScript): replay · lentes · comparador · painel da forja
+data/           mundo real e parâmetros vivos — dado com fonte citada por item · served/ = a corrida exibida pelo viewer
 docs/           ARQUITETURA (vigente) · índice · ADRs · PRD/SDD (históricos) · estudos e logs
 notebooks/      os experimentos Kaggle, classificados em notebooks/README.md
 experiments/    degrau1: artefatos e README do núcleo nativo

@@ -1,7 +1,8 @@
 # viewer-next — Path to Quantum (F0+F1+F2+F3+F4+F5+F6 — spec WOW fechada)
 
-App Vite + TypeScript (sem framework) da camada visual nova. O viewer legado em
-`../viewer/` continua intocado e abrindo corridas antigas. Stack: `docs/adr/ADR-001-stack-visual.md`;
+App Vite + TypeScript (sem framework) da camada visual — é **o** viewer do projeto.
+O player legado de arquivo único (`viewer/`) foi aposentado: tudo que ele fazia vive
+aqui (paridade provada no VIS-07). Stack: `docs/adr/ADR-001-stack-visual.md`;
 comportamento: `docs/SPEC-VISUAL-WOW.md`.
 
 ## Como abrir
@@ -15,7 +16,7 @@ npm run build      # → dist/ (100% estático, offline após o build)
 python3 -m http.server -d dist 8000
 ```
 
-- Sem parâmetros: abre a corrida servida (`viewer/*.json`, copiados em build para `dist/data/served/` — a fonte continua sendo `viewer/` + `data/world_data.json`).
+- Sem parâmetros: abre a corrida servida (`data/served/*.json`, copiados em build para `dist/data/served/` — a fonte é `data/served/` + `data/world_data.json`).
 - `?run=<dir>`: carrega `<dir>/frames.json` (rejeita `..`), como no legado (VIS-07).
 - `?compare=<dir>`: painel de comparação de frame final contra outra corrida (F6).
 - `?forge=<dir>`: painel da forja a partir dos artefatos do diretório (F6).
