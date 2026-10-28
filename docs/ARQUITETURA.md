@@ -26,8 +26,7 @@ flowchart LR
     ENG --> NAT["native_engine.py + native/ (C++/nanobind)<br/>backend opt-in, paridade bit-idêntica 11/11"]
     ENG --> CHR["chronicle.py + chronicle_rich.py<br/>eventos → história · rivalidades · retrospectiva"]
     ENG --> OUT["frames.json · chronicle.json · scoreboard.json"]
-    OUT --> VIEW["viewer/ (legado, arquivo único)<br/>replay · ?run= · comparador · ?forge="]
-    OUT -.-> VN["viewer-next (ADR-001)<br/>lentes sobre os mesmos JSONs"]
+    OUT --> VIEW["viewer-next (ADR-001)<br/>replay · ?run= · comparador · ?forge= · lentes sobre os mesmos JSONs"]
     TOR["tournament.py + driver.py<br/>CMA-ES em liga, episódios paralelos"] --> ENG
     FORGE["forge/ — mutador LLM + avaliador em cascata<br/>+ avaliação cega"] --> POL
 ```
@@ -72,8 +71,8 @@ A camada de serviços do mundo real, simulada com mecânica e custo ancorados em
 ### 2.8 Crônica (`chronicle.py`, `chronicle_rich.py`)
 Eventos estruturados (JSON) são a fonte da narrativa: fundações, sondagens, marcos de cadeia, campanhas, falências, aquisições. A **crônica rica** (#13, nesta base) é um pós-processador determinístico sobre eventos+frames — detectores de disputas por depósito e guerras de preço, e retrospectiva por era (líderes, viradas, primeiras falência/entrega/elos) — sem tocar no tick nem nos goldens.
 
-### 2.9 Viewer (`viewer/`) e viewer-next
-O viewer legado é um arquivo único sem dependências que lê `frames/chronicle/scoreboard.json`: replay com scrub, `?run=results/<corrida>` para carregar qualquer corrida, clique num marco da crônica salta ao frame, comparador de corridas e painel da forja (`?forge=`, com veredito, campeão, avaliação cega e estatísticas do mutador). O **viewer-next** — sistema visual por lentes (Recursos/Produção/Comércio/Empresas/Crônica) sobre base cartográfica real — é a frente irmã regida pelo [ADR-001](adr/README.md) e pelo estudo de referência visual; consome **os mesmos JSONs**, pelo invariante 5.
+### 2.9 Viewer (`viewer-next/`)
+O **viewer-next** é o viewer do projeto: sistema visual por lentes (Recursos/Produção/Comércio/Empresas/Crônica) sobre base cartográfica real, regido pelo [ADR-001](adr/README.md) e pela SPEC-VISUAL-WOW (fechada). Lê `frames/chronicle/scoreboard.json`: replay com scrub, `?run=results/<corrida>` para carregar qualquer corrida, clique num marco da crônica salta ao frame, comparador de corridas e painel da forja (`?forge=`, com veredito, campeão, avaliação cega e estatísticas do mutador). A corrida exibida sem parâmetros mora em `data/served/` e é copiada em build para o app. O player original de arquivo único (`viewer/index.html`, zero dependências) foi **aposentado** depois que o VIS-07 provou paridade completa no viewer-next; os JSONs que ele exibia eram dados, não player — e mudaram para `data/served/`.
 
 ### 2.10 Dados reais e proveniência (`realdata.py`, `data/`)
 `data/world_data.json` é a fonte preferencial do mundo: **13 depósitos e 11 cidades** da América do Sul (grade 30×22), cada item com figuras e **fontes citadas por item** (USGS, operadores, séries públicas). O mundo embutido em `world.py` (10 depósitos/8 cidades) é o *fallback* v0, preservado bit-idêntico com `world_data=False`. Parâmetros vivos moram em `data/*_params.json` via `marketdata.py`/`equipdata.py`/`countrydata.py` — dado com fonte, não código. `tables.py` projeta o estado do motor em struct-of-arrays (NumPy), a ponte usada pelo núcleo nativo e pelos drivers de torneio.

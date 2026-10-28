@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { legendHtml, legendItems, type LegendItem } from '../src/legend';
 import { parseRunData, type Frame } from '../src/contracts';
-import servedFrames from '../../viewer/frames.json';
+import servedFrames from '../../data/served/frames.json';
 
 const run = parseRunData(servedFrames);
 const frame0 = run.frames[0];
